@@ -3,13 +3,14 @@
   "source_video": "input.mp4",
   "global": {
     "aspect_ratio": "16:9",
-    "style_prompt": "cinematic noir, high contrast, moody lighting"
+    "style_prompt": "cinematic noir, high contrast, moody lighting",
+    "video_model": "veo"
   },
   "entities": {
     "entity_1": {
       "type": "main_subject",
       "name": "dog",
-      "reference_image": "stylized_frames/shot_03.png",
+      "reference_image": "stylized_frames/shot_02.png",
       "notes": "demo entity for global replace"
     }
   },
@@ -32,10 +33,10 @@
         "analyze": "SUCCESS",
         "extract_frames": "SUCCESS",
         "stylize": "SUCCESS",
-        "video_generate": "SUCCESS"
+        "video_generate": "FAILED"
       },
       "errors": {
-        "video_generate": null,
+        "video_generate": "from_bytes",
         "stylize": null
       }
     },
