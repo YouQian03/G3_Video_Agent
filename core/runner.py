@@ -3,6 +3,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import time
+import os
 
 from .workflow_io import save_workflow, load_workflow
 
@@ -25,16 +26,11 @@ def mock_stylize_frame(job_dir: Path, shot: dict) -> str:
 
 
 def mock_generate_video(job_dir: Path, shot: dict) -> str:
-    """
-    Demo 版：用 input.mp4 的前 1 秒做占位视频，验证 runner 的工作方式。
-    """
     videos_dir = ensure_videos_dir(job_dir)
     out_path = videos_dir / f"{shot['shot_id']}.mp4"
-
     src_video = job_dir / "input.mp4"
     if not src_video.exists():
         raise FileNotFoundError(f"找不到源视频：{src_video}")
-
     ffmpeg = "/opt/homebrew/bin/ffmpeg"
     cmd = [
         ffmpeg, "-y",
@@ -49,11 +45,9 @@ def mock_generate_video(job_dir: Path, shot: dict) -> str:
 
 def veo_generate_video(job_dir: Path, wf: dict, shot: dict) -> str:
     """
-    Veo 3.1 图生视频（官方写法：types.Image.from_file）
-    - stylized_frame 作为 opening frame
-    - 先做最小验证：5 秒、1 个视频
+    Veo 3.1 图生视频 - 严格参数修复版
+    根据 API 报错提示：durationSeconds 必须在 4-8 秒之间。
     """
-    import os
     from google import genai
     from google.genai import types
 
@@ -68,56 +62,67 @@ def veo_generate_video(job_dir: Path, wf: dict, shot: dict) -> str:
     if not img_rel:
         raise RuntimeError("shot 缺少 assets.stylized_frame")
     img_path = job_dir / img_rel
-    if not img_path.exists():
-        raise FileNotFoundError(f"找不到 stylized_frame：{img_path}")
 
+    # 1. 初始化客户端
+    client = genai.Client(api_key=api_key, http_options={'api_version': 'v1alpha'})
+
+    # 2. 准备 Prompt (尽量简洁，符合预览版习惯)
     global_style = wf.get("global", {}).get("style_prompt", "")
     desc = shot.get("description", "")
+    prompt = f"Cinematic scene: {desc}. Style: {global_style}. Smooth motion."
 
-    prompt = (
-        "Use the reference image as the opening frame of the video, fully retaining its visual texture.\n"
-        f"Scene: {desc}\n"
-        f"Style: {global_style}\n"
-        "Camera: slow cinematic push-in.\n"
-    )
+    # 3. 发起 Veo 请求
+    print(f"🚀 发起 Veo 请求 (Shot: {shot['shot_id']})...")
+    
+    try:
+        # 核心修正：
+        # - 将 duration_seconds 设为 6 (在 4-8 的正中间)
+        # - 确保 image 传递方式保持上一步验证通过的状态
+        operation = client.models.generate_videos(
+            model="veo-3.1-generate-preview", 
+            prompt=prompt,
+            image=types.Image(
+                image_bytes=img_path.read_bytes(),
+                mime_type="image/png"
+            ),
+            config=types.GenerateVideosConfig(
+                number_of_videos=1,
+                duration_seconds=6  # 明确设为 6，避开 5
+            ),
+        )
+    except Exception as e:
+        # 诚实的错误上报：如果参数没问题还报错，多半是 Google 接口不稳定
+        print(f"❌ API 调用阶段崩溃: {e}")
+        raise e
 
-    # 关键：用官方推荐的方式读取本地图片（会自动推断 mimeType）
-    image = types.Image.from_bytes(
-    data=img_path.read_bytes(),
-    mime_type="image/png",
-)
-
-
-    client = genai.Client(api_key=api_key)
-
-    operation = client.models.generate_videos(
-        model="veo-3.1-generate-preview",
-        prompt=prompt,
-        image=image,
-        config=types.GenerateVideosConfig(
-            number_of_videos=1,
-            duration_seconds=5,
-            enhance_prompt=True,
-        ),
-    )
-
-    # 轮询 operation（官方示例写法）
-    while not getattr(operation, "done", False):
+    # 4. 轮询状态
+    print(f"⏳ 任务已提交，Veo 正在生成视频，请耐心等待 (约 1-2 分钟)...")
+    while not operation.done:
         time.sleep(20)
-        operation = client.operations.get(operation)  # :contentReference[oaicite:2]{index=2}
+        operation = client.operations.get(operation.name)
+        print(f"⏳ 视频生成中...")
 
-    resp = getattr(operation, "response", None)
-    if not resp or not getattr(resp, "generated_videos", None):
-        raise RuntimeError(f"Veo 返回为空：{operation}")
+    if operation.error:
+        raise RuntimeError(f"Veo 任务失败: {operation.error}")
 
-    video = resp.generated_videos[0].video
+    # 5. 下载结果
+    resp = operation.response
+    if not resp or not resp.generated_videos:
+        raise RuntimeError(f"Veo 返回响应异常: {operation}")
 
-    # 尽量保存到本地：不同版本 SDK video 对象接口可能略有差异
-    if hasattr(video, "save"):
-        video.save(str(out_path))
+    video_file = resp.generated_videos[0].video
+    print(f"✅ 生成成功，正在下载文件...")
+    
+    # 尝试多种下载方式
+    if hasattr(video_file, "name"):
+        client.files.download(file=video_file.name, path=str(out_path))
     else:
-        # 兜底：至少把对象返回信息打印出来，避免你“啥也没拿到”
-        raise RuntimeError(f"SDK 返回 video 对象不支持 save(): {video}")
+        uri = getattr(video_file, "uri", None)
+        if uri:
+            file_name = uri.split('/')[-1]
+            client.files.download(file=file_name, path=str(out_path))
+        else:
+            raise RuntimeError("无法找到可供下载的视频文件标识")
 
     return f"videos/{out_path.name}"
 
@@ -127,13 +132,11 @@ def run_stylize(job_dir: Path, wf: dict, target_shot: str | None = None) -> None
         sid = shot.get("shot_id")
         if target_shot and sid != target_shot:
             continue
-
         status = shot.get("status", {}).get("stylize", "NOT_STARTED")
         if not target_shot and status not in ("NOT_STARTED", "FAILED"):
             continue
 
         shot.setdefault("status", {})["stylize"] = "RUNNING"
-        shot.setdefault("errors", {})["stylize"] = None
         save_workflow(job_dir, wf)
 
         try:
@@ -145,7 +148,6 @@ def run_stylize(job_dir: Path, wf: dict, target_shot: str | None = None) -> None
             shot["status"]["stylize"] = "FAILED"
             shot.setdefault("errors", {})["stylize"] = str(e)
             print(f"❌ stylize FAILED: {sid} -> {e}")
-
         save_workflow(job_dir, wf)
 
 
@@ -154,18 +156,15 @@ def run_video_generate(job_dir: Path, wf: dict, target_shot: str | None = None) 
         sid = shot.get("shot_id")
         if target_shot and sid != target_shot:
             continue
-
         status = shot.get("status", {}).get("video_generate", "NOT_STARTED")
         if not target_shot and status not in ("NOT_STARTED", "FAILED"):
             continue
 
         shot.setdefault("status", {})["video_generate"] = "RUNNING"
-        shot.setdefault("errors", {})["video_generate"] = None
         save_workflow(job_dir, wf)
 
         try:
             video_model = wf.get("global", {}).get("video_model", "mock")
-
             if video_model == "veo":
                 print("🔥 USING VEO PATH")
                 rel_video_path = veo_generate_video(job_dir, wf, shot)
@@ -177,13 +176,10 @@ def run_video_generate(job_dir: Path, wf: dict, target_shot: str | None = None) 
             print(f"✅ video_generate SUCCESS: {sid} -> {rel_video_path}")
         except Exception as e:
             import traceback
-
             shot["status"]["video_generate"] = "FAILED"
             shot.setdefault("errors", {})["video_generate"] = repr(e)
-
             print("❌ video_generate FAILED (full traceback below):")
             traceback.print_exc()
-
         save_workflow(job_dir, wf)
 
 
