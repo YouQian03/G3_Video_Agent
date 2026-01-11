@@ -36,7 +36,7 @@
         "video_generate": "FAILED"
       },
       "errors": {
-        "video_generate": "from_bytes",
+        "video_generate": "AttributeError('from_bytes')",
         "stylize": null
       }
     },

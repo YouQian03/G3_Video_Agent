@@ -176,9 +176,13 @@ def run_video_generate(job_dir: Path, wf: dict, target_shot: str | None = None) 
             shot["status"]["video_generate"] = "SUCCESS"
             print(f"✅ video_generate SUCCESS: {sid} -> {rel_video_path}")
         except Exception as e:
+            import traceback
+
             shot["status"]["video_generate"] = "FAILED"
-            shot.setdefault("errors", {})["video_generate"] = str(e)
-            print(f"❌ video_generate FAILED: {sid} -> {e}")
+            shot.setdefault("errors", {})["video_generate"] = repr(e)
+
+            print("❌ video_generate FAILED (full traceback below):")
+            traceback.print_exc()
 
         save_workflow(job_dir, wf)
 
