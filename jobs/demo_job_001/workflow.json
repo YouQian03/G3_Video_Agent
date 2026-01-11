@@ -33,10 +33,10 @@
         "analyze": "SUCCESS",
         "extract_frames": "SUCCESS",
         "stylize": "SUCCESS",
-        "video_generate": "FAILED"
+        "video_generate": "SUCCESS"
       },
       "errors": {
-        "video_generate": "TypeError(\"Files.download() got an unexpected keyword argument 'path'\")",
+        "video_generate": "RuntimeError('下载失败。状态码: 400, 详情: {\\n  \"error\": {\\n    \"code\": 400,\\n    \"message\": \"Invalid value \\\\\"media?key=AIzaSyBgDuk23TmU4r1Btgs8sjhhEiywhOn9NKg\\\\\" for query parameter \\'alt\\'\",\\n    \"status\": \"INVALID_ARGUMENT\"\\n  }\\n}\\n')",
         "stylize": null
       }
     },
