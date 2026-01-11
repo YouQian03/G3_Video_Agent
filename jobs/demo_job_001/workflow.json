@@ -36,7 +36,7 @@
         "video_generate": "FAILED"
       },
       "errors": {
-        "video_generate": "AttributeError(\"'str' object has no attribute 'name'\")",
+        "video_generate": "TypeError(\"Files.download() got an unexpected keyword argument 'path'\")",
         "stylize": null
       }
     },
