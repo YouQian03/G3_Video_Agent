@@ -8,7 +8,6 @@
     <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    <script src="https://unpkg.com/lucide@latest"></script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap');
         body { font-family: 'Inter', sans-serif; background-color: #0f172a; color: #f8fafc; }
@@ -21,18 +20,19 @@
     <div id="root"></div>
 
     <script type="text/babel">
-        const { useState, useEffect, useRef } = React;
+        const { useState, useEffect } = React;
 
         const App = () => {
             const [workflow, setWorkflow] = useState(null);
-            const [messages, setMessages] = useState([{ role: 'ai', text: '您好！我是您的 AI 导演助手。我已经准备好帮您二创视频了。您可以试着说：“把风格改成赛博朋克风格”。' }]);
+            const [messages, setMessages] = useState([{ role: 'ai', text: '您好！我是您的 AI 导演助手。建议试试说：“把风格改成赛博朋克风格”。' }]);
             const [inputText, setInputText] = useState('');
             const [loading, setLoading] = useState(false);
+            const [refreshKey, setRefreshKey] = useState(Date.now());
 
             // 1. 获取工作流数据
             const fetchWorkflow = async () => {
                 try {
-                    const res = await fetch('http://localhost:8000/api/workflow');
+                    const res = await fetch('/api/workflow');
                     const data = await res.json();
                     setWorkflow(data);
                 } catch (err) { console.error("获取数据失败", err); }
@@ -40,7 +40,7 @@
 
             useEffect(() => {
                 fetchWorkflow();
-                const timer = setInterval(fetchWorkflow, 3000); // 每3秒轮询一次状态
+                const timer = setInterval(fetchWorkflow, 3000); 
                 return () => clearInterval(timer);
             }, []);
 
@@ -53,103 +53,137 @@
                 setLoading(true);
 
                 try {
-                    const res = await fetch('http://localhost:8000/api/agent/chat', {
+                    const res = await fetch('/api/agent/chat', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ message: userMsg })
                     });
                     const data = await res.json();
-                    setMessages(prev => [...prev, { role: 'ai', text: `明白！我已执行指令：${JSON.stringify(data.action.op)}。相关分镜已准备重跑。` }]);
+                    const opName = (data.action && data.action.op) ? data.action.op : "指令已接收";
+                    setMessages(prev => [...prev, { role: 'ai', text: `明白！我已执行：${opName}。相关分镜已标记重跑。` }]);
+                    setRefreshKey(Date.now());
                     fetchWorkflow();
                 } catch (err) {
-                    setMessages(prev => [...prev, { role: 'ai', text: '抱歉，我刚才走神了，请重试。' }]);
+                    setMessages(prev => [...prev, { role: 'ai', text: 'Agent 响应超时，请检查后端。' }]);
                 } finally { setLoading(false); }
             };
 
             // 3. 触发生成
             const triggerRun = async (shotId = null) => {
                 try {
-                    await fetch(`http://localhost:8000/api/run/video_generate${shotId ? `?shot_id=${shotId}` : ''}`, { method: 'POST' });
-                    alert(shotId ? `正在重跑分镜 ${shotId}` : "正在全量生成视频...");
-                } catch (err) { alert("启动失败"); }
+                    await fetch(`/api/run/video_generate${shotId ? `?shot_id=${shotId}` : ''}`, { method: 'POST' });
+                    setRefreshKey(Date.now());
+                    fetchWorkflow();
+                } catch (err) { console.error("启动失败", err); }
             };
 
-            if (!workflow) return <div className="flex h-screen items-center justify-center">加载引擎中...</div>;
+            if (!workflow) return <div className="flex h-screen items-center justify-center">正在连接到 AI 引擎...</div>;
 
             return (
                 <div className="flex h-screen overflow-hidden p-4 gap-4">
-                    {/* 左侧：工作流展示 */}
+                    {/* 左侧：分镜流 */}
                     <div className="flex-1 flex flex-col gap-4">
                         <div className="glass rounded-2xl p-6 flex justify-between items-center">
                             <div>
                                 <h1 className="text-xl font-bold text-white">🎬 AI 爆款二创系统</h1>
-                                <p className="text-sm text-slate-400">当前风格: <span className="text-blue-400">{workflow.global.style_prompt}</span></p>
+                                <p className="text-sm text-slate-400 mt-1">当前风格: <span className="text-blue-400 font-semibold">{workflow.global ? workflow.global.style_prompt : "默认"}</span></p>
                             </div>
-                            <button onClick={() => triggerRun()} className="bg-blue-600 hover:bg-blue-500 px-4 py-2 rounded-lg text-sm font-semibold transition">
+                            <button onClick={() => triggerRun()} className="bg-blue-600 hover:bg-blue-500 px-6 py-2 rounded-xl text-sm font-bold transition">
                                 全量生成
                             </button>
                         </div>
 
                         <div className="flex-1 overflow-y-auto custom-scrollbar space-y-4 pr-2">
-                            {workflow.shots.map(shot => (
-                                <div key={shot.shot_id} className="glass rounded-xl p-4 flex gap-4 hover:border-blue-500/50 transition">
-                                    <div className="w-48 h-28 bg-slate-800 rounded-lg overflow-hidden relative group">
-                                        {shot.assets.video ? (
-                                            <video src={`http://localhost:8000/api/workflow/../../assets/${shot.assets.video}`} className="w-full h-full object-cover" controls />
-                                        ) : (
-                                            <img src={`http://localhost:8000/api/workflow/../../assets/${shot.assets.stylized_frame || shot.assets.first_frame}`} className="w-full h-full object-cover" />
-                                        )}
-                                        <div className="absolute top-2 left-2 bg-black/60 px-2 py-0.5 rounded text-[10px]">{shot.shot_id}</div>
-                                    </div>
-                                    <div className="flex-1 flex flex-col justify-between">
-                                        <div>
-                                            <p className="text-sm text-slate-200 line-clamp-2">{shot.description}</p>
-                                            <div className="mt-2 flex gap-2">
-                                                <span className={`text-[10px] px-2 py-0.5 rounded-full ${shot.status.video_generate === 'SUCCESS' ? 'bg-green-500/20 text-green-400' : 'bg-yellow-500/20 text-yellow-400'}`}>
-                                                    {shot.status.video_generate}
-                                                </span>
+                            {workflow.shots && workflow.shots.map(shot => {
+                                const isSuccess = shot.status && shot.status.video_generate === 'SUCCESS';
+                                const cacheBuster = refreshKey;
+                                
+                                return (
+                                    <div key={shot.shot_id} className={`glass rounded-xl p-4 flex gap-4 border ${isSuccess ? 'border-green-500/30' : 'border-white/5'}`}>
+                                        <div className="w-56 h-32 bg-slate-900 rounded-lg overflow-hidden relative shadow-inner">
+                                            {isSuccess && shot.assets && shot.assets.video ? (
+                                                <video 
+                                                    key={`${shot.shot_id}-${cacheBuster}`}
+                                                    src={`/assets/${shot.assets.video}?t=${cacheBuster}`} 
+                                                    className="w-full h-full object-cover" 
+                                                    controls 
+                                                />
+                                            ) : (
+                                                <div className="w-full h-full relative">
+                                                    <img 
+                                                        src={shot.assets ? `/assets/${shot.assets.stylized_frame || shot.assets.first_frame}?t=${cacheBuster}` : ""} 
+                                                        className="w-full h-full object-cover opacity-50" 
+                                                    />
+                                                    {shot.status && shot.status.video_generate === 'RUNNING' && (
+                                                        <div className="absolute inset-0 flex items-center justify-center bg-black/40">
+                                                            <div className="w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            )}
+                                            <div className="absolute top-2 left-2 bg-black/70 px-2 py-0.5 rounded text-[10px] font-mono text-white/80">
+                                                {shot.shot_id}
                                             </div>
                                         </div>
-                                        <div className="flex justify-end">
-                                            <button onClick={() => triggerRun(shot.shot_id)} className="text-xs text-blue-400 hover:text-blue-300">
-                                                单独重跑
-                                            </button>
+                                        
+                                        <div className="flex-1 flex flex-col justify-between py-1">
+                                            <div>
+                                                <p className="text-sm text-slate-300 italic">"{shot.description}"</p>
+                                                <div className="mt-3 flex items-center gap-2">
+                                                    <span className={`text-[10px] font-bold px-2 py-1 rounded tracking-wider uppercase ${
+                                                        isSuccess ? 'bg-green-500/20 text-green-400' : 
+                                                        (shot.status && shot.status.video_generate === 'RUNNING') ? 'bg-blue-500/20 text-blue-400' :
+                                                        'bg-slate-700/50 text-slate-400'
+                                                    }`}>
+                                                        {shot.status ? shot.status.video_generate : "WAITING"}
+                                                    </span>
+                                                </div>
+                                            </div>
+                                            <div className="flex justify-end">
+                                                <button onClick={() => triggerRun(shot.shot_id)} className="text-xs text-slate-400 hover:text-blue-400">
+                                                    单独重跑
+                                                </button>
+                                            </div>
                                         </div>
                                     </div>
-                                </div>
-                            ))}
+                                );
+                            })}
                         </div>
                     </div>
 
-                    {/* 右侧：Agent 对话 */}
-                    <div className="w-96 flex flex-col glass rounded-2xl overflow-hidden">
+                    {/* 右侧：对话 */}
+                    <div className="w-96 flex flex-col glass rounded-2xl overflow-hidden shadow-2xl">
                         <div className="p-4 border-b border-white/10 bg-white/5">
                             <h2 className="font-semibold flex items-center gap-2">
                                 <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
                                 AI 导演助手
                             </h2>
                         </div>
-                        <div className="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar">
+                        
+                        <div className="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar bg-slate-900/30">
                             {messages.map((m, i) => (
                                 <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                                    <div className={`max-w-[80%] p-3 rounded-2xl text-sm ${m.role === 'user' ? 'bg-blue-600 text-white' : 'bg-slate-700 text-slate-200'}`}>
+                                    <div className={`max-w-[85%] p-3 rounded-2xl text-sm ${
+                                        m.role === 'user' ? 'bg-blue-600 text-white' : 'bg-slate-800 text-slate-200'
+                                    }`}>
                                         {m.text}
                                     </div>
                                 </div>
                             ))}
-                            {loading && <div className="text-xs text-slate-500 animate-pulse">Agent 正在思考并修改工作流...</div>}
+                            {loading && <div className="text-xs text-slate-500 animate-pulse text-center">正在思考指令...</div>}
                         </div>
-                        <div className="p-4 bg-slate-800/50 border-t border-white/10">
+
+                        <div className="p-4 bg-slate-800/80 border-t border-white/10">
                             <div className="flex gap-2">
                                 <input 
                                     value={inputText}
                                     onChange={(e) => setInputText(e.target.value)}
                                     onKeyDown={(e) => e.key === 'Enter' && sendMessage()}
                                     placeholder="输入指令，如：换成动漫风格..." 
-                                    className="flex-1 bg-slate-900 border border-white/10 rounded-xl px-4 py-2 text-sm focus:outline-none focus:border-blue-500"
+                                    className="flex-1 bg-slate-950/50 border border-white/10 rounded-xl px-4 py-2 text-sm focus:outline-none focus:border-blue-500 text-white"
                                 />
-                                <button onClick={sendMessage} className="bg-blue-600 p-2 rounded-xl hover:bg-blue-500">
-                                    <i data-lucide="send" className="w-5 h-5"></i>
+                                <button onClick={sendMessage} className="bg-blue-600 px-4 py-2 rounded-xl hover:bg-blue-500 text-sm font-bold">
+                                    发送
                                 </button>
                             </div>
                         </div>
@@ -160,7 +194,6 @@
 
         const root = ReactDOM.createRoot(document.getElementById('root'));
         root.render(<App />);
-        setTimeout(() => lucide.createIcons(), 500);
     </script>
 </body>
 </html>

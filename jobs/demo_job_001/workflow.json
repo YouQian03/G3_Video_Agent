@@ -3,7 +3,7 @@
   "source_video": "input.mp4",
   "global": {
     "aspect_ratio": "16:9",
-    "style_prompt": "二次元动漫风格",
+    "style_prompt": "极简线条插画感",
     "video_model": "veo"
   },
   "entities": {
@@ -27,13 +27,13 @@
       "assets": {
         "first_frame": "frames/shot_01.png",
         "stylized_frame": "stylized_frames/shot_01.png",
-        "video": "videos/shot_01.mp4"
+        "video": null
       },
       "status": {
         "analyze": "SUCCESS",
         "extract_frames": "SUCCESS",
         "stylize": "NOT_STARTED",
-        "video_generate": "SUCCESS"
+        "video_generate": "NOT_STARTED"
       },
       "errors": {
         "video_generate": "RuntimeError('下载失败。状态码: 400, 详情: {\\n  \"error\": {\\n    \"code\": 400,\\n    \"message\": \"Invalid value \\\\\"media?key=AIzaSyBgDuk23TmU4r1Btgs8sjhhEiywhOn9NKg\\\\\" for query parameter \\'alt\\'\",\\n    \"status\": \"INVALID_ARGUMENT\"\\n  }\\n}\\n')",
@@ -93,13 +93,13 @@
       "assets": {
         "first_frame": "frames/shot_04.png",
         "stylized_frame": "stylized_frames/shot_04.png",
-        "video": null
+        "video": "videos/shot_04.mp4"
       },
       "status": {
         "analyze": "SUCCESS",
         "extract_frames": "SUCCESS",
         "stylize": "NOT_STARTED",
-        "video_generate": "NOT_STARTED"
+        "video_generate": "SUCCESS"
       },
       "errors": {
         "video_generate": null,
@@ -218,7 +218,7 @@
     }
   ],
   "meta": {
-    "updated_at": "2026-01-12T07:45:03Z",
-    "attempts": 4
+    "updated_at": "2026-01-12T08:06:04Z",
+    "attempts": 6
   }
 }

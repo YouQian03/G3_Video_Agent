@@ -29,6 +29,11 @@ def mock_stylize_frame(job_dir: Path, shot: dict) -> str:
 def mock_generate_video(job_dir: Path, shot: dict) -> str:
     videos_dir = ensure_videos_dir(job_dir)
     out_path = videos_dir / f"{shot['shot_id']}.mp4"
+    
+    # 核心：启动前清场，确保状态同步准确
+    if out_path.exists():
+        os.remove(out_path)
+
     src_video = job_dir / "input.mp4"
     if not src_video.exists():
         raise FileNotFoundError(f"找不到源视频：{src_video}")
@@ -46,10 +51,9 @@ def mock_generate_video(job_dir: Path, shot: dict) -> str:
 
 def veo_generate_video(job_dir: Path, wf: dict, shot: dict) -> str:
     """
-    Veo 3.1 图生视频 - 最终修复版
-    1. 使用 v1alpha 生成（必须）
-    2. 使用 v1beta 下载（更稳定）
-    3. 使用 requests params 字典避免 URL 拼接错误
+    Veo 3.1 图生视频 - 健壮性增强版
+    1. 增加安全过滤检查，防止空引用崩溃
+    2. 生成前清理旧文件
     """
     from google import genai
     from google.genai import types
@@ -60,6 +64,11 @@ def veo_generate_video(job_dir: Path, wf: dict, shot: dict) -> str:
 
     videos_dir = ensure_videos_dir(job_dir)
     out_path = videos_dir / f"{shot['shot_id']}.mp4"
+
+    # --- 启动前清场 ---
+    if out_path.exists():
+        print(f"🗑️ 准备生成新视频，清理旧文件: {out_path}")
+        os.remove(out_path)
 
     img_rel = shot.get("assets", {}).get("stylized_frame")
     if not img_rel:
@@ -94,11 +103,14 @@ def veo_generate_video(job_dir: Path, wf: dict, shot: dict) -> str:
     if operation.error:
         raise RuntimeError(f"Veo 后端报错: {operation.error}")
 
-    # 4. 准备下载
+    # 4. 结果检查 (重要修复点：防止安全过滤导致的崩溃)
     resp = operation.response
+    if not resp or not hasattr(resp, 'generated_videos') or not resp.generated_videos:
+        # 如果模型因为安全策略拒绝生成，resp.generated_videos 会是 None 或空列表
+        raise RuntimeError("Veo 未返回视频内容。这通常由于 Prompt 触发了安全过滤或模型生成异常。")
+
     video_obj = resp.generated_videos[0].video
     
-    # file_id 通常是 "files/xxxx"
     file_id = getattr(video_obj, 'name', None)
     if not file_id and hasattr(video_obj, 'uri'):
         file_id = f"files/{video_obj.uri.split('/')[-1]}"
@@ -106,39 +118,27 @@ def veo_generate_video(job_dir: Path, wf: dict, shot: dict) -> str:
     if not file_id:
         raise RuntimeError(f"无法定位生成的视频文件: {video_obj}")
 
-    # 5. 核心修复：使用 v1beta 端点和 requests 自动参数处理
-    print(f"✅ 生成成功，正在通过 v1beta 稳定端点下载视频...")
-    
-    # 使用 v1beta 往往能解决 alpha 端点的 alt=media 解析 Bug
+    # 5. 下载视频
+    print(f"✅ 生成成功，正在下载视频...")
     download_url = f"https://generativelanguage.googleapis.com/v1beta/{file_id}"
-    
-    # 使用 params 字典，requests 会自动处理成 ?alt=media&key=...
-    # 这种方式比字符串格式化更安全，不会出现 ? 和 & 混淆
-    query_params = {
-        'alt': 'media',
-        'key': api_key
-    }
+    query_params = {'alt': 'media', 'key': api_key}
 
     try:
         response = requests.get(download_url, params=query_params, stream=True)
-        
-        # 如果 v1beta 不通，再最后尝试一次 v1alpha
         if response.status_code != 200:
-            print(f"⚠️ v1beta 下载失败 (Code: {response.status_code})，尝试 v1alpha...")
             alpha_url = f"https://generativelanguage.googleapis.com/v1alpha/{file_id}"
             response = requests.get(alpha_url, params=query_params, stream=True)
 
         if response.status_code == 200:
             with open(out_path, 'wb') as f:
-                for chunk in response.iter_content(chunk_size=1024*1024): # 1MB chunks
-                    if chunk:
-                        f.write(chunk)
+                for chunk in response.iter_content(chunk_size=1024*1024): 
+                    if chunk: f.write(chunk)
             print(f"💾 视频生成并下载成功！本地路径: {out_path}")
         else:
-            raise RuntimeError(f"下载依然失败。状态码: {response.status_code}, 详情: {response.text}")
+            raise RuntimeError(f"下载失败。状态码: {response.status_code}")
             
     except Exception as e:
-        print(f"❌ 下载过程发生致命错误: {e}")
+        print(f"❌ 下载过程异常: {e}")
         raise e
 
     return f"videos/{out_path.name}"
@@ -175,18 +175,18 @@ def run_video_generate(job_dir: Path, wf: dict, target_shot: str | None = None) 
         try:
             video_model = wf.get("global", {}).get("video_model", "mock")
             if video_model == "veo":
-                print("🔥 USING VEO PATH")
+                print(f"🔥 执行 Veo 任务: {sid}")
                 rel_video_path = veo_generate_video(job_dir, wf, shot)
             else:
                 rel_video_path = mock_generate_video(job_dir, shot)
             shot.setdefault("assets", {})["video"] = rel_video_path
             shot["status"]["video_generate"] = "SUCCESS"
-            print(f"✅ video_generate SUCCESS: {sid} -> {rel_video_path}")
+            print(f"✅ video_generate SUCCESS: {sid}")
         except Exception as e:
             import traceback
             shot["status"]["video_generate"] = "FAILED"
-            shot.setdefault("errors", {})["video_generate"] = repr(e)
-            print("❌ video_generate FAILED:")
+            shot.setdefault("errors", {})["video_generate"] = str(e)
+            print(f"❌ video_generate FAILED: {sid}")
             traceback.print_exc()
         save_workflow(job_dir, wf)
 
