@@ -3,17 +3,19 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI 爆款二创系统 - Demo</title>
+    <title>AI 导演工作台 - 3形态合一版</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap');
-        body { font-family: 'Inter', sans-serif; background-color: #0f172a; color: #f8fafc; }
-        .glass { background: rgba(30, 41, 59, 0.7); backdrop-filter: blur(12px); border: 1px solid rgba(255,255,255,0.1); }
-        .custom-scrollbar::-webkit-scrollbar { width: 6px; }
-        .custom-scrollbar::-webkit-scrollbar-thumb { background: #334155; border-radius: 10px; }
+        body { font-family: 'Inter', sans-serif; background-color: #020617; color: #f8fafc; }
+        .glass { background: rgba(15, 23, 42, 0.6); backdrop-filter: blur(12px); border: 1px solid rgba(255,255,255,0.05); }
+        .node-line { stroke: #3b82f6; stroke-width: 2; fill: none; stroke-dasharray: 5; animation: dash 2s linear infinite; }
+        @keyframes dash { from { stroke-dashoffset: 20; } to { stroke-dashoffset: 0; } }
+        .custom-scrollbar::-webkit-scrollbar { width: 4px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #1e293b; border-radius: 10px; }
     </style>
 </head>
 <body>
@@ -24,167 +26,199 @@
 
         const App = () => {
             const [workflow, setWorkflow] = useState(null);
-            const [messages, setMessages] = useState([{ role: 'ai', text: '您好！我是您的 AI 导演助手。建议试试说：“把风格改成赛博朋克风格”。' }]);
+            const [viewMode, setViewMode] = useState('grid'); 
+            const [messages, setMessages] = useState([{ role: 'ai', text: '导演您好！我是您的 Agent 指挥官。我可以一键修改全局风格，也可以帮您监控工作流状态。' }]);
             const [inputText, setInputText] = useState('');
             const [loading, setLoading] = useState(false);
-            const [refreshKey, setRefreshKey] = useState(Date.now());
+            // 💡 引入一个本地时间戳，用于在重跑成功后强制刷新所有媒体资产
+            const [sessionTimestamp, setSessionTimestamp] = useState(Date.now());
 
-            // 1. 获取工作流数据
             const fetchWorkflow = async () => {
                 try {
                     const res = await fetch('/api/workflow');
                     const data = await res.json();
                     setWorkflow(data);
-                } catch (err) { console.error("获取数据失败", err); }
+                } catch (e) { console.error("Update failed", e); }
             };
 
             useEffect(() => {
                 fetchWorkflow();
-                const timer = setInterval(fetchWorkflow, 3000); 
+                const timer = setInterval(fetchWorkflow, 3000);
                 return () => clearInterval(timer);
             }, []);
 
-            // 2. 发送消息给 Agent
-            const sendMessage = async () => {
+            const sendAgentMsg = async () => {
                 if (!inputText.trim()) return;
-                const userMsg = inputText;
-                setMessages(prev => [...prev, { role: 'user', text: userMsg }]);
-                setInputText('');
+                const msg = inputText; setInputText('');
+                setMessages(prev => [...prev, { role: 'user', text: msg }]);
                 setLoading(true);
-
-                try {
-                    const res = await fetch('/api/agent/chat', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ message: userMsg })
-                    });
-                    const data = await res.json();
-                    const opName = (data.action && data.action.op) ? data.action.op : "指令已接收";
-                    setMessages(prev => [...prev, { role: 'ai', text: `明白！我已执行：${opName}。相关分镜已标记重跑。` }]);
-                    setRefreshKey(Date.now());
-                    fetchWorkflow();
-                } catch (err) {
-                    setMessages(prev => [...prev, { role: 'ai', text: 'Agent 响应超时，请检查后端。' }]);
-                } finally { setLoading(false); }
+                await fetch('/api/agent/chat', { 
+                    method: 'POST', 
+                    headers: {'Content-Type': 'application/json'}, 
+                    body: JSON.stringify({ message: msg }) 
+                });
+                setLoading(false);
+                setSessionTimestamp(Date.now()); // 修改全局风格后，刷新预览
+                fetchWorkflow();
             };
 
-            // 3. 触发生成
-            const triggerRun = async (shotId = null) => {
-                try {
-                    await fetch(`/api/run/video_generate${shotId ? `?shot_id=${shotId}` : ''}`, { method: 'POST' });
-                    setRefreshKey(Date.now());
-                    fetchWorkflow();
-                } catch (err) { console.error("启动失败", err); }
+            const updateShot = async (shotId, desc) => {
+                await fetch('/api/shot/update', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ shot_id: shotId, description: desc })
+                });
+                fetchWorkflow();
             };
 
-            if (!workflow) return <div className="flex h-screen items-center justify-center">正在连接到 AI 引擎...</div>;
+            const runTask = async (type, shotId = null) => {
+                await fetch(`/api/run/${type}${shotId ? `?shot_id=${shotId}` : ''}`, { method: 'POST' });
+                // 触发任务时，先清空一下本地时间戳引用
+                setSessionTimestamp(Date.now());
+            };
+
+            if (!workflow) return <div className="h-screen flex items-center justify-center font-mono">INITIATING CORE...</div>;
 
             return (
-                <div className="flex h-screen overflow-hidden p-4 gap-4">
-                    {/* 左侧：分镜流 */}
-                    <div className="flex-1 flex flex-col gap-4">
-                        <div className="glass rounded-2xl p-6 flex justify-between items-center">
-                            <div>
-                                <h1 className="text-xl font-bold text-white">🎬 AI 爆款二创系统</h1>
-                                <p className="text-sm text-slate-400 mt-1">当前风格: <span className="text-blue-400 font-semibold">{workflow.global ? workflow.global.style_prompt : "默认"}</span></p>
+                <div className="h-screen flex flex-col p-4 gap-4 overflow-hidden">
+                    {/* Header */}
+                    <div className="glass rounded-2xl p-4 flex items-center justify-between">
+                        <div className="flex items-center gap-6">
+                            <h1 className="text-xl font-bold bg-gradient-to-r from-blue-400 to-emerald-400 bg-clip-text text-transparent">AI DIRECTOR WORKSTATION</h1>
+                            <div className="flex bg-slate-900 rounded-lg p-1 border border-white/5">
+                                <button onClick={() => setViewMode('grid')} className={`px-4 py-1.5 rounded-md text-xs font-bold transition ${viewMode === 'grid' ? 'bg-blue-600 text-white' : 'text-slate-500'}`}>STORYBOARD (精修)</button>
+                                <button onClick={() => setViewMode('graph')} className={`px-4 py-1.5 rounded-md text-xs font-bold transition ${viewMode === 'graph' ? 'bg-blue-600 text-white' : 'text-slate-500'}`}>GRAPH (工作流)</button>
                             </div>
-                            <button onClick={() => triggerRun()} className="bg-blue-600 hover:bg-blue-500 px-6 py-2 rounded-xl text-sm font-bold transition">
-                                全量生成
-                            </button>
                         </div>
-
-                        <div className="flex-1 overflow-y-auto custom-scrollbar space-y-4 pr-2">
-                            {workflow.shots && workflow.shots.map(shot => {
-                                const isSuccess = shot.status && shot.status.video_generate === 'SUCCESS';
-                                const cacheBuster = refreshKey;
-                                
-                                return (
-                                    <div key={shot.shot_id} className={`glass rounded-xl p-4 flex gap-4 border ${isSuccess ? 'border-green-500/30' : 'border-white/5'}`}>
-                                        <div className="w-56 h-32 bg-slate-900 rounded-lg overflow-hidden relative shadow-inner">
-                                            {isSuccess && shot.assets && shot.assets.video ? (
-                                                <video 
-                                                    key={`${shot.shot_id}-${cacheBuster}`}
-                                                    src={`/assets/${shot.assets.video}?t=${cacheBuster}`} 
-                                                    className="w-full h-full object-cover" 
-                                                    controls 
-                                                />
-                                            ) : (
-                                                <div className="w-full h-full relative">
-                                                    <img 
-                                                        src={shot.assets ? `/assets/${shot.assets.stylized_frame || shot.assets.first_frame}?t=${cacheBuster}` : ""} 
-                                                        className="w-full h-full object-cover opacity-50" 
-                                                    />
-                                                    {shot.status && shot.status.video_generate === 'RUNNING' && (
-                                                        <div className="absolute inset-0 flex items-center justify-center bg-black/40">
-                                                            <div className="w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
-                                                        </div>
-                                                    )}
-                                                </div>
-                                            )}
-                                            <div className="absolute top-2 left-2 bg-black/70 px-2 py-0.5 rounded text-[10px] font-mono text-white/80">
-                                                {shot.shot_id}
-                                            </div>
-                                        </div>
-                                        
-                                        <div className="flex-1 flex flex-col justify-between py-1">
-                                            <div>
-                                                <p className="text-sm text-slate-300 italic">"{shot.description}"</p>
-                                                <div className="mt-3 flex items-center gap-2">
-                                                    <span className={`text-[10px] font-bold px-2 py-1 rounded tracking-wider uppercase ${
-                                                        isSuccess ? 'bg-green-500/20 text-green-400' : 
-                                                        (shot.status && shot.status.video_generate === 'RUNNING') ? 'bg-blue-500/20 text-blue-400' :
-                                                        'bg-slate-700/50 text-slate-400'
-                                                    }`}>
-                                                        {shot.status ? shot.status.video_generate : "WAITING"}
-                                                    </span>
-                                                </div>
-                                            </div>
-                                            <div className="flex justify-end">
-                                                <button onClick={() => triggerRun(shot.shot_id)} className="text-xs text-slate-400 hover:text-blue-400">
-                                                    单独重跑
-                                                </button>
-                                            </div>
-                                        </div>
-                                    </div>
-                                );
-                            })}
+                        <div className="flex items-center gap-4">
+                            <div className="text-right">
+                                <p className="text-[10px] text-slate-500 uppercase tracking-widest font-bold">Global Style</p>
+                                <p className="text-sm text-blue-400 font-mono">{workflow.global?.style_prompt || 'Default'}</p>
+                            </div>
+                            <button onClick={() => runTask('video_generate')} className="bg-emerald-600 hover:bg-emerald-500 px-6 py-2 rounded-xl text-sm font-bold shadow-lg transition-all">全量生成</button>
                         </div>
                     </div>
 
-                    {/* 右侧：对话 */}
-                    <div className="w-96 flex flex-col glass rounded-2xl overflow-hidden shadow-2xl">
-                        <div className="p-4 border-b border-white/10 bg-white/5">
-                            <h2 className="font-semibold flex items-center gap-2">
-                                <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
-                                AI 导演助手
-                            </h2>
-                        </div>
-                        
-                        <div className="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar bg-slate-900/30">
-                            {messages.map((m, i) => (
-                                <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                                    <div className={`max-w-[85%] p-3 rounded-2xl text-sm ${
-                                        m.role === 'user' ? 'bg-blue-600 text-white' : 'bg-slate-800 text-slate-200'
-                                    }`}>
-                                        {m.text}
+                    <div className="flex flex-1 gap-4 overflow-hidden">
+                        <div className="flex-1 glass rounded-3xl overflow-hidden relative border border-white/5">
+                            {viewMode === 'grid' ? (
+                                <div className="h-full overflow-y-auto p-6 custom-scrollbar">
+                                    <div className="grid grid-cols-2 lg:grid-cols-3 gap-6">
+                                        {workflow.shots?.map(shot => {
+                                            const isSuccess = shot.status?.video_generate === 'SUCCESS';
+                                            const isRunning = shot.status?.video_generate === 'RUNNING';
+                                            // 💡 这里的 cacheKey 非常关键，状态变绿或 attempts 变化时，都会强行销毁旧播放器
+                                            const cacheKey = `${shot.shot_id}-${shot.status?.video_generate}-${workflow.meta?.attempts || sessionTimestamp}`;
+                                            
+                                            return (
+                                                <div key={shot.shot_id} className={`group glass rounded-2xl overflow-hidden border transition-all ${isSuccess ? 'border-emerald-500/30 shadow-[0_0_15px_rgba(16,185,129,0.1)]' : 'border-white/5'}`}>
+                                                    <div className="aspect-video bg-slate-900 relative">
+                                                        {isSuccess && shot.assets?.video ? (
+                                                            <video 
+                                                                key={cacheKey}
+                                                                src={`/assets/${shot.assets.video}?v=${cacheKey}`} 
+                                                                className="w-full h-full object-cover" 
+                                                                controls 
+                                                                preload="auto"
+                                                            />
+                                                        ) : (
+                                                            <div className="w-full h-full relative">
+                                                                <img 
+                                                                    key={`${cacheKey}-img`}
+                                                                    src={`/assets/${shot.assets?.stylized_frame || shot.assets?.first_frame}?v=${cacheKey}`} 
+                                                                    className="w-full h-full object-cover opacity-40" 
+                                                                />
+                                                                {isRunning && (
+                                                                    <div className="absolute inset-0 flex flex-col items-center justify-center bg-blue-900/20 backdrop-blur-sm">
+                                                                        <div className="w-10 h-10 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mb-2"></div>
+                                                                        <span className="text-[10px] font-bold text-blue-400 tracking-tighter">RENDERING VIDEO</span>
+                                                                    </div>
+                                                                )}
+                                                            </div>
+                                                        )}
+                                                        <div className="absolute top-3 left-3 bg-black/60 backdrop-blur-md px-2 py-0.5 rounded font-mono text-[10px] border border-white/10">{shot.shot_id}</div>
+                                                    </div>
+                                                    <div className="p-4 flex flex-col gap-3">
+                                                        <textarea 
+                                                            className="w-full bg-slate-950/50 border border-transparent focus:border-blue-500/50 rounded-lg p-2 text-xs text-slate-300 outline-none resize-none h-16 transition-all"
+                                                            defaultValue={shot.description}
+                                                            onBlur={(e) => updateShot(shot.shot_id, e.target.value)}
+                                                        />
+                                                        <div className="flex justify-between items-center">
+                                                            <span className={`text-[9px] font-bold px-2 py-0.5 rounded uppercase tracking-tighter ${isSuccess ? 'text-emerald-400 bg-emerald-400/10' : 'text-blue-400 bg-blue-400/10'}`}>
+                                                                {shot.status?.video_generate}
+                                                            </span>
+                                                            <button onClick={() => runTask('video_generate', shot.shot_id)} className="text-[10px] font-semibold text-slate-500 hover:text-white transition-colors">
+                                                                重新绘制
+                                                            </button>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            );
+                                        })}
                                     </div>
                                 </div>
-                            ))}
-                            {loading && <div className="text-xs text-slate-500 animate-pulse text-center">正在思考指令...</div>}
+                            ) : (
+                                <div className="h-full relative overflow-hidden bg-slate-950/20">
+                                    <svg className="absolute inset-0 w-full h-full opacity-20">
+                                        {workflow.shots?.map((_, i) => (
+                                            <path key={i} d={`M 100 250 L 400 ${50 + i * 100}`} className="node-line" />
+                                        ))}
+                                    </svg>
+                                    <div className="absolute left-10 top-1/2 -translate-y-1/2 glass p-6 rounded-2xl border-blue-500/50 border-2 w-56">
+                                        <p className="text-[10px] font-bold text-blue-400 uppercase mb-2 tracking-widest font-bold">Global Style Node</p>
+                                        <p className="text-xs font-mono truncate">{workflow.global?.style_prompt}</p>
+                                    </div>
+                                    <div className="absolute left-[400px] top-5 flex flex-col gap-4 overflow-y-auto max-h-full p-4 custom-scrollbar">
+                                        {workflow.shots?.map(shot => (
+                                            <div key={shot.shot_id} className={`glass p-3 rounded-xl border w-64 transition-all ${shot.status?.video_generate === 'SUCCESS' ? 'border-emerald-500/50' : 'border-white/5'}`}>
+                                                <div className="flex gap-3 items-center">
+                                                    <div className="w-10 h-10 rounded bg-slate-900 overflow-hidden flex-shrink-0">
+                                                        <img src={`/assets/${shot.assets?.first_frame}?v=${sessionTimestamp}`} className="w-full h-full object-cover" />
+                                                    </div>
+                                                    <div className="overflow-hidden">
+                                                        <p className="text-[10px] font-bold text-slate-300">{shot.shot_id}</p>
+                                                        <p className="text-[8px] text-slate-500 truncate italic">"{shot.description}"</p>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
                         </div>
 
-                        <div className="p-4 bg-slate-800/80 border-t border-white/10">
-                            <div className="flex gap-2">
-                                <input 
-                                    value={inputText}
-                                    onChange={(e) => setInputText(e.target.value)}
-                                    onKeyDown={(e) => e.key === 'Enter' && sendMessage()}
-                                    placeholder="输入指令，如：换成动漫风格..." 
-                                    className="flex-1 bg-slate-950/50 border border-white/10 rounded-xl px-4 py-2 text-sm focus:outline-none focus:border-blue-500 text-white"
-                                />
-                                <button onClick={sendMessage} className="bg-blue-600 px-4 py-2 rounded-xl hover:bg-blue-500 text-sm font-bold">
-                                    发送
-                                </button>
+                        {/* 右侧 Agent */}
+                        <div className="w-80 flex flex-col gap-4">
+                            <div className="flex-1 glass rounded-3xl flex flex-col overflow-hidden border border-white/5">
+                                <div className="p-4 border-b border-white/5 bg-white/5 font-bold text-xs uppercase tracking-tighter flex items-center gap-2">
+                                    <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse"></div>
+                                    Director Agent
+                                </div>
+                                <div className="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar text-xs">
+                                    {messages.map((m, i) => (
+                                        <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                                            <div className={`max-w-[90%] p-3 rounded-2xl ${m.role === 'user' ? 'bg-blue-600 text-white' : 'bg-slate-800 text-slate-200 shadow-sm border border-white/5'}`}>
+                                                {m.text}
+                                            </div>
+                                        </div>
+                                    ))}
+                                    {loading && <div className="text-[10px] text-slate-500 animate-pulse text-center font-mono uppercase">Syncing Workflow...</div>}
+                                </div>
+                                <div className="p-4 bg-slate-900/50 border-t border-white/5">
+                                    <div className="flex gap-2">
+                                        <input value={inputText} onChange={e => setInputText(e.target.value)} onKeyDown={e => e.key === 'Enter' && sendAgentMsg()} placeholder="输入全局指令..." className="flex-1 bg-slate-950 border border-white/10 rounded-xl px-3 py-2 text-xs focus:border-blue-500 outline-none text-white transition-all" />
+                                        <button onClick={sendAgentMsg} className="bg-blue-600 hover:bg-blue-500 px-3 py-2 rounded-xl text-xs font-bold transition-all active:scale-95">发送</button>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div className="h-32 glass rounded-3xl p-4 font-mono text-[9px] text-slate-500 border border-white/5 overflow-hidden">
+                                <p className="text-blue-500 font-bold mb-1 uppercase tracking-widest">[Status Log]</p>
+                                <p>> Engine: Gemini-2.0-Flash</p>
+                                <p>> Update: {workflow.meta?.updated_at || 'Waiting...'}</p>
+                                <p>> Attempts: {workflow.meta?.attempts || 0}</p>
+                                <p className="text-emerald-500">> System status: ONLINE</p>
                             </div>
                         </div>
                     </div>

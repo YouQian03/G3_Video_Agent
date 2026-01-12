@@ -32,7 +32,7 @@ The content is organized as follows:
 <notes>
 - Some files may have been excluded based on .gitignore rules and Repomix's configuration
 - Binary files are not included in this packed representation. Please refer to the Repository Structure section for a complete list of file paths, including binary files
-- Files matching these patterns are excluded: **/*.mp4, **/*.png, **/*.jpg, **/venv/**, **/.venv/**, **/__pycache__/**, **/.git/**
+- Files matching these patterns are excluded: **/*.mp4, **/*.png, **/*.jpg, **/*.zip, **/venv/**, **/.venv/**, **/__pycache__/**, **/.git/**, all_code.txt, repomix-output.xml
 - Files matching patterns in .gitignore are excluded
 - Files matching default ignore patterns are excluded
 - Files are sorted by Git change count (files with more changes are at the bottom)
@@ -43,23 +43,29 @@ The content is organized as follows:
 <directory_structure>
 core/
   __init__.py
+  agent_engine.py
   changes.py
   runner.py
   workflow_io.py
+  workflow_manager.py
 jobs/
   demo_job_001/
     storyboard.json
     workflow.json
 outputs/
   storyboard.json
+agent_demo.py
 analyze_video.py
+app.py
 apply_changes.py
 build_workflow.py
 extract_frames.py
+index.html
 run_workflow.py
 smoke_test_core.py
 stylize_frames.py
 test_gemini.py
+vibe_check.py
 video_generator.py
 workflow_cli.py
 </directory_structure>
@@ -69,6 +75,63 @@ This section contains the contents of the repository's files.
 
 <file path="core/__init__.py">
 
+</file>
+
+<file path="core/agent_engine.py">
+# core/agent_engine.py
+import os
+import json
+from google import genai
+from typing import Dict, Any
+
+class AgentEngine:
+    def __init__(self):
+        api_key = os.getenv("GEMINI_API_KEY")
+        if not api_key:
+            raise RuntimeError("未检测到 GEMINI_API_KEY")
+        self.client = genai.Client(api_key=api_key)
+        # 修改这里：改为你环境里测试通过的 2.0 版本，这样最稳
+        self.model_id = "gemini-2.0-flash" 
+
+    def get_action_from_text(self, user_input: str, workflow_summary: str) -> Dict[str, Any]:
+        """
+        将用户的自然语言转化为 WorkflowManager 的 Action JSON
+        """
+        system_prompt = f"""
+你是一个专业的视频制作助理。你的任务是分析用户的需求，并将其转化为对工作流的操作指令。
+
+当前工作流摘要:
+{workflow_summary}
+
+支持的操作指令 (Action JSON) 格式如下：
+1. 修改全局风格: {{"op": "set_global_style", "value": "风格描述词"}}
+2. 替换实体参考图: {{"op": "replace_entity_ref", "entity_id": "实体ID", "new_ref": "图片路径"}}
+
+注意：
+- 只输出纯 JSON 格式，不要有任何 Markdown 代码块标签（如 ```json ）。
+- 如果用户说修改整体风格或画风，使用 set_global_style。
+- 如果用户提到修改具体的人物、动物或主体，使用 replace_entity_ref。
+- 如果无法匹配操作，请返回 {{"op": "none", "reason": "理由"}}。
+"""
+        
+        try:
+            # 这里的调用方式保持不变
+            response = self.client.models.generate_content(
+                model=self.model_id,
+                contents=[system_prompt, f"用户需求: {user_input}"]
+            )
+            
+            text = response.text.strip()
+            
+            # 清洗 Gemini 偶尔会返回的 Markdown 标签
+            if "```json" in text:
+                text = text.split("```json")[1].split("```")[0].strip()
+            elif "```" in text:
+                text = text.split("```")[1].split("```")[0].strip()
+                
+            return json.loads(text)
+        except Exception as e:
+            return {"op": "error", "reason": f"解析失败: {str(e)}", "raw": response.text if 'response' in locals() else "No response"}
 </file>
 
 <file path="core/changes.py">
@@ -398,6 +461,49 @@ def save_workflow(job_dir: Path, wf: dict) -> None:
 ]
 </file>
 
+<file path="agent_demo.py">
+# agent_demo.py
+import os
+from core.workflow_manager import WorkflowManager
+from core.agent_engine import AgentEngine
+
+def main():
+    # 1. 初始化
+    manager = WorkflowManager("demo_job_001")
+    agent = AgentEngine()
+    
+    print("--- AI 爆款二创 Agent 驱动模式 ---")
+    print("当前风格:", manager.workflow.get("global", {}).get("style_prompt"))
+    print("当前实体:", list(manager.workflow.get("entities", {}).keys()))
+    print("-" * 30)
+    
+    while True:
+        user_text = input("\n🤖 您想对视频做何修改？(输入 'exit' 退出): ")
+        if user_text.lower() == 'exit':
+            break
+            
+        # 准备工作流摘要（告诉 Gemini 当前有什么，它才能改）
+        summary = f"Style: {manager.workflow.get('global', {}).get('style_prompt')}\n"
+        summary += f"Entities: {json.dumps(manager.workflow.get('entities', {}), indent=2)}"
+        
+        print("🔍 Agent 正在思考...")
+        action = agent.get_action_from_text(user_text, summary)
+        
+        print(f"🎯 解析指令: {action}")
+        
+        if action.get("op") != "none" and action.get("op") != "error":
+            # 执行修改
+            res = manager.apply_agent_action(action)
+            print(f"✅ 执行成功！受影响分镜数: {res['affected_shots']}")
+            print(f"🔄 所有受影响的分镜状态已重置，准备重新生成。")
+        else:
+            print(f"⚠️ 无法执行: {action.get('reason')}")
+
+if __name__ == "__main__":
+    import json
+    main()
+</file>
+
 <file path="analyze_video.py">
 import os
 import json
@@ -530,6 +636,99 @@ def main():
 
 if __name__ == "__main__":
     main()
+</file>
+
+<file path="app.py">
+# app.py
+import os
+from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi.staticfiles import StaticFiles
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from pydantic import BaseModel
+from typing import Optional, Dict, Any
+
+from core.workflow_manager import WorkflowManager
+from core.agent_engine import AgentEngine
+
+app = FastAPI(title="AI 爆款二创系统 API")
+
+# 1. 解决跨域问题（方便前端调用）
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# 2. 初始化核心引擎
+# 暂时硬编码 job_id 为 demo_job_001
+JOB_ID = "demo_job_001"
+manager = WorkflowManager(JOB_ID)
+agent = AgentEngine()
+
+# --- 数据模型 ---
+class ChatRequest(BaseModel):
+    message: str
+
+class ActionRequest(BaseModel):
+    op: str
+    value: Optional[str] = None
+    entity_id: Optional[str] = None
+    new_ref: Optional[str] = None
+    shot_id: Optional[str] = None
+
+# --- 路由接口 ---
+
+@app.get("/")
+async def read_index():
+    """主页：直接返回前端 HTML 文件"""
+    return FileResponse('index.html')
+
+@app.get("/api/workflow")
+async def get_workflow():
+    """获取当前完整的工作流状态"""
+    manager.load()  # 强迫指挥官重新读一遍硬盘上的 workflow.json
+    return manager.workflow
+
+@app.post("/api/agent/chat")
+async def agent_chat(req: ChatRequest):
+    """形态 2：Agent 对话接口"""
+    wf = manager.load()
+    summary = f"Style: {wf.get('global', {}).get('style_prompt')}\n"
+    summary += f"Entities: {list(wf.get('entities', {}).keys())}"
+    
+    action = agent.get_action_from_text(req.message, summary)
+    
+    if action.get("op") not in ["none", "error"]:
+        res = manager.apply_agent_action(action)
+        return {"action": action, "result": res}
+    else:
+        return {"action": action, "result": {"status": "ignored", "reason": action.get("reason")}}
+
+@app.post("/api/action")
+async def manual_action(req: ActionRequest):
+    """形态 3：直接参数修改接口"""
+    res = manager.apply_agent_action(req.dict())
+    return res
+
+@app.post("/api/run/{node_type}")
+async def run_task(node_type: str, background_tasks: BackgroundTasks, shot_id: Optional[str] = None):
+    """形态 1：执行任务（异步运行）"""
+    if node_type not in ["stylize", "video_generate"]:
+        raise HTTPException(status_code=400, detail="无效的节点类型")
+    
+    background_tasks.add_task(manager.run_node, node_type, shot_id)
+    return {"status": "started", "node": node_type, "shot_id": shot_id}
+
+# 3. 挂载静态文件（放在路由后面，确保不遮挡 API）
+# 映射 jobs 目录，让前端可以访问到图片和视频
+app.mount("/assets", StaticFiles(directory=f"jobs/{JOB_ID}"), name="assets")
+
+if __name__ == "__main__":
+    import uvicorn
+    # 启动命令：python app.py
+    uvicorn.run(app, host="0.0.0.0", port=8000)
 </file>
 
 <file path="apply_changes.py">
@@ -1102,6 +1301,29 @@ if __name__ == "__main__":
     main()
 </file>
 
+<file path="vibe_check.py">
+# vibe_check.py
+from core.workflow_manager import WorkflowManager
+
+# 1. 初始化（使用你已有的 demo_job_001）
+manager = WorkflowManager("demo_job_001")
+
+# 2. 模拟形态 3：直接改全局风格
+print("正在尝试修改全局风格...")
+res = manager.apply_agent_action({"op": "set_global_style", "value": "Cyberpunk Neon"})
+print(f"受影响分镜数: {res['affected_shots']}")
+
+# 3. 验证状态是否变回了 NOT_STARTED (这是我们 changes.py 里的级联逻辑)
+manager.load() # 重新加载看磁盘上的结果
+first_shot_status = manager.workflow["shots"][0]["status"]["video_generate"]
+print(f"修改风格后，Shot 01 的生成状态是: {first_shot_status}")
+
+if first_shot_status == "NOT_STARTED":
+    print("✅ 底座逻辑验证成功！")
+else:
+    print("❌ 状态没有正确重置，请检查 core/changes.py")
+</file>
+
 <file path="video_generator.py">
 import os
 import time
@@ -1259,6 +1481,331 @@ if __name__ == "__main__":
     main()
 </file>
 
+<file path="index.html">
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI 爆款二创系统 - Demo</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap');
+        body { font-family: 'Inter', sans-serif; background-color: #0f172a; color: #f8fafc; }
+        .glass { background: rgba(30, 41, 59, 0.7); backdrop-filter: blur(12px); border: 1px solid rgba(255,255,255,0.1); }
+        .custom-scrollbar::-webkit-scrollbar { width: 6px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #334155; border-radius: 10px; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect } = React;
+
+        const App = () => {
+            const [workflow, setWorkflow] = useState(null);
+            const [messages, setMessages] = useState([{ role: 'ai', text: '您好！我是您的 AI 导演助手。建议试试说：“把风格改成赛博朋克风格”。' }]);
+            const [inputText, setInputText] = useState('');
+            const [loading, setLoading] = useState(false);
+            const [refreshKey, setRefreshKey] = useState(Date.now());
+
+            // 1. 获取工作流数据
+            const fetchWorkflow = async () => {
+                try {
+                    const res = await fetch('/api/workflow');
+                    const data = await res.json();
+                    setWorkflow(data);
+                } catch (err) { console.error("获取数据失败", err); }
+            };
+
+            useEffect(() => {
+                fetchWorkflow();
+                const timer = setInterval(fetchWorkflow, 3000); 
+                return () => clearInterval(timer);
+            }, []);
+
+            // 2. 发送消息给 Agent
+            const sendMessage = async () => {
+                if (!inputText.trim()) return;
+                const userMsg = inputText;
+                setMessages(prev => [...prev, { role: 'user', text: userMsg }]);
+                setInputText('');
+                setLoading(true);
+
+                try {
+                    const res = await fetch('/api/agent/chat', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ message: userMsg })
+                    });
+                    const data = await res.json();
+                    const opName = (data.action && data.action.op) ? data.action.op : "指令已接收";
+                    setMessages(prev => [...prev, { role: 'ai', text: `明白！我已执行：${opName}。相关分镜已标记重跑。` }]);
+                    setRefreshKey(Date.now());
+                    fetchWorkflow();
+                } catch (err) {
+                    setMessages(prev => [...prev, { role: 'ai', text: 'Agent 响应超时，请检查后端。' }]);
+                } finally { setLoading(false); }
+            };
+
+            // 3. 触发生成
+            const triggerRun = async (shotId = null) => {
+                try {
+                    await fetch(`/api/run/video_generate${shotId ? `?shot_id=${shotId}` : ''}`, { method: 'POST' });
+                    setRefreshKey(Date.now());
+                    fetchWorkflow();
+                } catch (err) { console.error("启动失败", err); }
+            };
+
+            if (!workflow) return <div className="flex h-screen items-center justify-center">正在连接到 AI 引擎...</div>;
+
+            return (
+                <div className="flex h-screen overflow-hidden p-4 gap-4">
+                    {/* 左侧：分镜流 */}
+                    <div className="flex-1 flex flex-col gap-4">
+                        <div className="glass rounded-2xl p-6 flex justify-between items-center">
+                            <div>
+                                <h1 className="text-xl font-bold text-white">🎬 AI 爆款二创系统</h1>
+                                <p className="text-sm text-slate-400 mt-1">当前风格: <span className="text-blue-400 font-semibold">{workflow.global ? workflow.global.style_prompt : "默认"}</span></p>
+                            </div>
+                            <button onClick={() => triggerRun()} className="bg-blue-600 hover:bg-blue-500 px-6 py-2 rounded-xl text-sm font-bold transition">
+                                全量生成
+                            </button>
+                        </div>
+
+                        <div className="flex-1 overflow-y-auto custom-scrollbar space-y-4 pr-2">
+                            {workflow.shots && workflow.shots.map(shot => {
+                                const isSuccess = shot.status && shot.status.video_generate === 'SUCCESS';
+                                const cacheBuster = refreshKey;
+                                
+                                return (
+                                    <div key={shot.shot_id} className={`glass rounded-xl p-4 flex gap-4 border ${isSuccess ? 'border-green-500/30' : 'border-white/5'}`}>
+                                        <div className="w-56 h-32 bg-slate-900 rounded-lg overflow-hidden relative shadow-inner">
+                                            {isSuccess && shot.assets && shot.assets.video ? (
+                                                <video 
+                                                    key={`${shot.shot_id}-${cacheBuster}`}
+                                                    src={`/assets/${shot.assets.video}?t=${cacheBuster}`} 
+                                                    className="w-full h-full object-cover" 
+                                                    controls 
+                                                />
+                                            ) : (
+                                                <div className="w-full h-full relative">
+                                                    <img 
+                                                        src={shot.assets ? `/assets/${shot.assets.stylized_frame || shot.assets.first_frame}?t=${cacheBuster}` : ""} 
+                                                        className="w-full h-full object-cover opacity-50" 
+                                                    />
+                                                    {shot.status && shot.status.video_generate === 'RUNNING' && (
+                                                        <div className="absolute inset-0 flex items-center justify-center bg-black/40">
+                                                            <div className="w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            )}
+                                            <div className="absolute top-2 left-2 bg-black/70 px-2 py-0.5 rounded text-[10px] font-mono text-white/80">
+                                                {shot.shot_id}
+                                            </div>
+                                        </div>
+                                        
+                                        <div className="flex-1 flex flex-col justify-between py-1">
+                                            <div>
+                                                <p className="text-sm text-slate-300 italic">"{shot.description}"</p>
+                                                <div className="mt-3 flex items-center gap-2">
+                                                    <span className={`text-[10px] font-bold px-2 py-1 rounded tracking-wider uppercase ${
+                                                        isSuccess ? 'bg-green-500/20 text-green-400' : 
+                                                        (shot.status && shot.status.video_generate === 'RUNNING') ? 'bg-blue-500/20 text-blue-400' :
+                                                        'bg-slate-700/50 text-slate-400'
+                                                    }`}>
+                                                        {shot.status ? shot.status.video_generate : "WAITING"}
+                                                    </span>
+                                                </div>
+                                            </div>
+                                            <div className="flex justify-end">
+                                                <button onClick={() => triggerRun(shot.shot_id)} className="text-xs text-slate-400 hover:text-blue-400">
+                                                    单独重跑
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    </div>
+
+                    {/* 右侧：对话 */}
+                    <div className="w-96 flex flex-col glass rounded-2xl overflow-hidden shadow-2xl">
+                        <div className="p-4 border-b border-white/10 bg-white/5">
+                            <h2 className="font-semibold flex items-center gap-2">
+                                <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+                                AI 导演助手
+                            </h2>
+                        </div>
+                        
+                        <div className="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar bg-slate-900/30">
+                            {messages.map((m, i) => (
+                                <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                                    <div className={`max-w-[85%] p-3 rounded-2xl text-sm ${
+                                        m.role === 'user' ? 'bg-blue-600 text-white' : 'bg-slate-800 text-slate-200'
+                                    }`}>
+                                        {m.text}
+                                    </div>
+                                </div>
+                            ))}
+                            {loading && <div className="text-xs text-slate-500 animate-pulse text-center">正在思考指令...</div>}
+                        </div>
+
+                        <div className="p-4 bg-slate-800/80 border-t border-white/10">
+                            <div className="flex gap-2">
+                                <input 
+                                    value={inputText}
+                                    onChange={(e) => setInputText(e.target.value)}
+                                    onKeyDown={(e) => e.key === 'Enter' && sendMessage()}
+                                    placeholder="输入指令，如：换成动漫风格..." 
+                                    className="flex-1 bg-slate-950/50 border border-white/10 rounded-xl px-4 py-2 text-sm focus:outline-none focus:border-blue-500 text-white"
+                                />
+                                <button onClick={sendMessage} className="bg-blue-600 px-4 py-2 rounded-xl hover:bg-blue-500 text-sm font-bold">
+                                    发送
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
+</file>
+
+<file path="core/workflow_manager.py">
+# core/workflow_manager.py
+import json
+import time
+import os
+from pathlib import Path
+from typing import Dict, List, Any, Optional
+
+from core.workflow_io import load_workflow, save_workflow
+from core.changes import apply_global_style, replace_entity_reference
+from core.runner import run_pipeline, run_stylize, run_video_generate
+
+class WorkflowManager:
+    def __init__(self, job_id: str, project_root: Optional[Path] = None):
+        self.job_id = job_id
+        self.project_dir = project_root or Path(__file__).parent.parent
+        self.job_dir = self.project_dir / "jobs" / job_id
+        self.workflow: Dict[str, Any] = {}
+        
+        if (self.job_dir / "workflow.json").exists():
+            self.load()
+
+    def load(self):
+        """加载状态：只有当任务确实在跑，且新文件出现了，才算 SUCCESS"""
+        self.workflow = load_workflow(self.job_dir)
+        
+        updated = False
+        for shot in self.workflow.get("shots", []):
+            sid = shot.get("shot_id")
+            video_output_path = self.job_dir / "videos" / f"{sid}.mp4"
+            
+            status_node = shot.get("status", {})
+            current_status = status_node.get("video_generate")
+            
+            # --- 严谨同步逻辑 ---
+            # 只有在 RUNNING 状态下，检测到视频文件【重新生成】了，才变绿
+            if current_status == "RUNNING" and video_output_path.exists():
+                status_node["video_generate"] = "SUCCESS"
+                shot.setdefault("assets", {})["video"] = f"videos/{sid}.mp4"
+                updated = True
+                print(f"✨ 物理确认：分镜 {sid} 已由 AI 生成新视频，状态更正为 SUCCESS")
+            
+            # 如果状态是 SUCCESS 但文件没了，打回 NOT_STARTED
+            elif current_status == "SUCCESS" and not video_output_path.exists():
+                status_node["video_generate"] = "NOT_STARTED"
+                shot.setdefault("assets", {})["video"] = None
+                updated = True
+        
+        if updated:
+            self.save()
+            
+        return self.workflow
+
+    def save(self):
+        self.workflow.setdefault("meta", {})["updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        save_workflow(self.job_dir, self.workflow)
+
+    def apply_agent_action(self, action: Dict[str, Any]) -> Dict[str, Any]:
+        """修改指令：改风格的同时，清空所有视频引用路径"""
+        op = action.get("op")
+        affected_count = 0
+        
+        if op == "set_global_style":
+            new_style = action.get("value")
+            affected_count = apply_global_style(self.workflow, new_style, cascade=True)
+            if affected_count > 0:
+                for shot in self.workflow.get("shots", []):
+                    # 风格变了，旧视频预览必须消失
+                    shot.setdefault("assets", {})["video"] = None 
+
+        elif op == "replace_entity_ref":
+            ent_id = action.get("entity_id")
+            new_ref = action.get("new_ref")
+            affected_count = replace_entity_reference(self.workflow, ent_id, new_ref)
+            if affected_count > 0:
+                for shot in self.workflow.get("shots", []):
+                    if ent_id in shot.get("entities", []):
+                        shot.setdefault("assets", {})["video"] = None
+
+        if affected_count > 0:
+            self.save()
+        return {"status": "success", "affected_shots": affected_count}
+
+    def run_node(self, node_type: str, shot_id: Optional[str] = None):
+        """执行任务：在发起后台任务前，【立即】删除旧文件"""
+        self.workflow.setdefault("meta", {}).setdefault("attempts", 0)
+        self.workflow["meta"]["attempts"] += 1
+        
+        # --- 核心修复：防止秒变 SUCCESS ---
+        # 如果是视频生成节点，我们直接在主进程里先把文件删了
+        if node_type == "video_generate":
+            shots_to_clear = []
+            if shot_id:
+                shots_to_clear = [s for s in self.workflow.get("shots", []) if s["shot_id"] == shot_id]
+            else:
+                shots_to_clear = self.workflow.get("shots", [])
+            
+            for s in shots_to_clear:
+                video_file = self.job_dir / "videos" / f"{s['shot_id']}.mp4"
+                if video_file.exists():
+                    print(f"🗑️ 发令瞬间清理旧视频: {video_file}")
+                    os.remove(video_file)
+                # 立即标记状态并清空引用，确保下一秒轮询拿不到 SUCCESS
+                s.setdefault("status", {})["video_generate"] = "RUNNING"
+                s.setdefault("assets", {})["video"] = None
+
+        self.save() # 删完立刻存盘，让前端轮询看到 RUNNING 且没文件的状态
+
+        # 启动后台任务
+        if node_type == "stylize":
+            run_stylize(self.job_dir, self.workflow, target_shot=shot_id)
+        elif node_type == "video_generate":
+            run_video_generate(self.job_dir, self.workflow, target_shot=shot_id)
+        
+        self.save()
+
+    def _get_shot_by_id(self, shot_id: str) -> Optional[Dict]:
+        for s in self.workflow.get("shots", []):
+            if s.get("shot_id") == shot_id:
+                return s
+        return None
+</file>
+
 <file path="core/runner.py">
 # core/runner.py
 from pathlib import Path
@@ -1291,6 +1838,11 @@ def mock_stylize_frame(job_dir: Path, shot: dict) -> str:
 def mock_generate_video(job_dir: Path, shot: dict) -> str:
     videos_dir = ensure_videos_dir(job_dir)
     out_path = videos_dir / f"{shot['shot_id']}.mp4"
+    
+    # 核心：启动前清场，确保状态同步准确
+    if out_path.exists():
+        os.remove(out_path)
+
     src_video = job_dir / "input.mp4"
     if not src_video.exists():
         raise FileNotFoundError(f"找不到源视频：{src_video}")
@@ -1308,10 +1860,9 @@ def mock_generate_video(job_dir: Path, shot: dict) -> str:
 
 def veo_generate_video(job_dir: Path, wf: dict, shot: dict) -> str:
     """
-    Veo 3.1 图生视频 - 最终修复版
-    1. 使用 v1alpha 生成（必须）
-    2. 使用 v1beta 下载（更稳定）
-    3. 使用 requests params 字典避免 URL 拼接错误
+    Veo 3.1 图生视频 - 健壮性增强版
+    1. 增加安全过滤检查，防止空引用崩溃
+    2. 生成前清理旧文件
     """
     from google import genai
     from google.genai import types
@@ -1322,6 +1873,11 @@ def veo_generate_video(job_dir: Path, wf: dict, shot: dict) -> str:
 
     videos_dir = ensure_videos_dir(job_dir)
     out_path = videos_dir / f"{shot['shot_id']}.mp4"
+
+    # --- 启动前清场 ---
+    if out_path.exists():
+        print(f"🗑️ 准备生成新视频，清理旧文件: {out_path}")
+        os.remove(out_path)
 
     img_rel = shot.get("assets", {}).get("stylized_frame")
     if not img_rel:
@@ -1356,11 +1912,14 @@ def veo_generate_video(job_dir: Path, wf: dict, shot: dict) -> str:
     if operation.error:
         raise RuntimeError(f"Veo 后端报错: {operation.error}")
 
-    # 4. 准备下载
+    # 4. 结果检查 (重要修复点：防止安全过滤导致的崩溃)
     resp = operation.response
+    if not resp or not hasattr(resp, 'generated_videos') or not resp.generated_videos:
+        # 如果模型因为安全策略拒绝生成，resp.generated_videos 会是 None 或空列表
+        raise RuntimeError("Veo 未返回视频内容。这通常由于 Prompt 触发了安全过滤或模型生成异常。")
+
     video_obj = resp.generated_videos[0].video
     
-    # file_id 通常是 "files/xxxx"
     file_id = getattr(video_obj, 'name', None)
     if not file_id and hasattr(video_obj, 'uri'):
         file_id = f"files/{video_obj.uri.split('/')[-1]}"
@@ -1368,39 +1927,27 @@ def veo_generate_video(job_dir: Path, wf: dict, shot: dict) -> str:
     if not file_id:
         raise RuntimeError(f"无法定位生成的视频文件: {video_obj}")
 
-    # 5. 核心修复：使用 v1beta 端点和 requests 自动参数处理
-    print(f"✅ 生成成功，正在通过 v1beta 稳定端点下载视频...")
-    
-    # 使用 v1beta 往往能解决 alpha 端点的 alt=media 解析 Bug
+    # 5. 下载视频
+    print(f"✅ 生成成功，正在下载视频...")
     download_url = f"https://generativelanguage.googleapis.com/v1beta/{file_id}"
-    
-    # 使用 params 字典，requests 会自动处理成 ?alt=media&key=...
-    # 这种方式比字符串格式化更安全，不会出现 ? 和 & 混淆
-    query_params = {
-        'alt': 'media',
-        'key': api_key
-    }
+    query_params = {'alt': 'media', 'key': api_key}
 
     try:
         response = requests.get(download_url, params=query_params, stream=True)
-        
-        # 如果 v1beta 不通，再最后尝试一次 v1alpha
         if response.status_code != 200:
-            print(f"⚠️ v1beta 下载失败 (Code: {response.status_code})，尝试 v1alpha...")
             alpha_url = f"https://generativelanguage.googleapis.com/v1alpha/{file_id}"
             response = requests.get(alpha_url, params=query_params, stream=True)
 
         if response.status_code == 200:
             with open(out_path, 'wb') as f:
-                for chunk in response.iter_content(chunk_size=1024*1024): # 1MB chunks
-                    if chunk:
-                        f.write(chunk)
+                for chunk in response.iter_content(chunk_size=1024*1024): 
+                    if chunk: f.write(chunk)
             print(f"💾 视频生成并下载成功！本地路径: {out_path}")
         else:
-            raise RuntimeError(f"下载依然失败。状态码: {response.status_code}, 详情: {response.text}")
+            raise RuntimeError(f"下载失败。状态码: {response.status_code}")
             
     except Exception as e:
-        print(f"❌ 下载过程发生致命错误: {e}")
+        print(f"❌ 下载过程异常: {e}")
         raise e
 
     return f"videos/{out_path.name}"
@@ -1437,18 +1984,18 @@ def run_video_generate(job_dir: Path, wf: dict, target_shot: str | None = None) 
         try:
             video_model = wf.get("global", {}).get("video_model", "mock")
             if video_model == "veo":
-                print("🔥 USING VEO PATH")
+                print(f"🔥 执行 Veo 任务: {sid}")
                 rel_video_path = veo_generate_video(job_dir, wf, shot)
             else:
                 rel_video_path = mock_generate_video(job_dir, shot)
             shot.setdefault("assets", {})["video"] = rel_video_path
             shot["status"]["video_generate"] = "SUCCESS"
-            print(f"✅ video_generate SUCCESS: {sid} -> {rel_video_path}")
+            print(f"✅ video_generate SUCCESS: {sid}")
         except Exception as e:
             import traceback
             shot["status"]["video_generate"] = "FAILED"
-            shot.setdefault("errors", {})["video_generate"] = repr(e)
-            print("❌ video_generate FAILED:")
+            shot.setdefault("errors", {})["video_generate"] = str(e)
+            print(f"❌ video_generate FAILED: {sid}")
             traceback.print_exc()
         save_workflow(job_dir, wf)
 
@@ -1466,7 +2013,7 @@ def run_pipeline(job_dir: Path, target_shot: str | None = None) -> None:
   "source_video": "input.mp4",
   "global": {
     "aspect_ratio": "16:9",
-    "style_prompt": "cinematic noir, high contrast, moody lighting",
+    "style_prompt": "极简线条插画感",
     "video_model": "veo"
   },
   "entities": {
@@ -1490,13 +2037,13 @@ def run_pipeline(job_dir: Path, target_shot: str | None = None) -> None:
       "assets": {
         "first_frame": "frames/shot_01.png",
         "stylized_frame": "stylized_frames/shot_01.png",
-        "video": "videos/shot_01.mp4"
+        "video": null
       },
       "status": {
         "analyze": "SUCCESS",
         "extract_frames": "SUCCESS",
-        "stylize": "SUCCESS",
-        "video_generate": "SUCCESS"
+        "stylize": "NOT_STARTED",
+        "video_generate": "NOT_STARTED"
       },
       "errors": {
         "video_generate": "RuntimeError('下载失败。状态码: 400, 详情: {\\n  \"error\": {\\n    \"code\": 400,\\n    \"message\": \"Invalid value \\\\\"media?key=AIzaSyBgDuk23TmU4r1Btgs8sjhhEiywhOn9NKg\\\\\" for query parameter \\'alt\\'\",\\n    \"status\": \"INVALID_ARGUMENT\"\\n  }\\n}\\n')",
@@ -1512,13 +2059,13 @@ def run_pipeline(job_dir: Path, target_shot: str | None = None) -> None:
       "assets": {
         "first_frame": "frames/shot_02.png",
         "stylized_frame": "stylized_frames/shot_02.png",
-        "video": "videos/shot_02.mp4"
+        "video": null
       },
       "status": {
         "analyze": "SUCCESS",
         "extract_frames": "SUCCESS",
-        "stylize": "SUCCESS",
-        "video_generate": "SUCCESS"
+        "stylize": "NOT_STARTED",
+        "video_generate": "NOT_STARTED"
       },
       "errors": {
         "video_generate": null,
@@ -1534,13 +2081,13 @@ def run_pipeline(job_dir: Path, target_shot: str | None = None) -> None:
       "assets": {
         "first_frame": "frames/shot_03.png",
         "stylized_frame": "stylized_frames/shot_03.png",
-        "video": "videos/shot_03.mp4"
+        "video": null
       },
       "status": {
         "analyze": "SUCCESS",
         "extract_frames": "SUCCESS",
-        "stylize": "SUCCESS",
-        "video_generate": "SUCCESS"
+        "stylize": "NOT_STARTED",
+        "video_generate": "NOT_STARTED"
       },
       "errors": {
         "video_generate": null,
@@ -1561,7 +2108,7 @@ def run_pipeline(job_dir: Path, target_shot: str | None = None) -> None:
       "status": {
         "analyze": "SUCCESS",
         "extract_frames": "SUCCESS",
-        "stylize": "SUCCESS",
+        "stylize": "NOT_STARTED",
         "video_generate": "SUCCESS"
       },
       "errors": {
@@ -1578,13 +2125,13 @@ def run_pipeline(job_dir: Path, target_shot: str | None = None) -> None:
       "assets": {
         "first_frame": "frames/shot_05.png",
         "stylized_frame": "stylized_frames/shot_05.png",
-        "video": "videos/shot_05.mp4"
+        "video": null
       },
       "status": {
         "analyze": "SUCCESS",
         "extract_frames": "SUCCESS",
-        "stylize": "SUCCESS",
-        "video_generate": "SUCCESS"
+        "stylize": "NOT_STARTED",
+        "video_generate": "NOT_STARTED"
       },
       "errors": {
         "video_generate": null,
@@ -1600,13 +2147,13 @@ def run_pipeline(job_dir: Path, target_shot: str | None = None) -> None:
       "assets": {
         "first_frame": "frames/shot_06.png",
         "stylized_frame": "stylized_frames/shot_06.png",
-        "video": "videos/shot_06.mp4"
+        "video": null
       },
       "status": {
         "analyze": "SUCCESS",
         "extract_frames": "SUCCESS",
-        "stylize": "SUCCESS",
-        "video_generate": "SUCCESS"
+        "stylize": "NOT_STARTED",
+        "video_generate": "NOT_STARTED"
       },
       "errors": {
         "video_generate": null,
@@ -1622,13 +2169,13 @@ def run_pipeline(job_dir: Path, target_shot: str | None = None) -> None:
       "assets": {
         "first_frame": "frames/shot_07.png",
         "stylized_frame": "stylized_frames/shot_07.png",
-        "video": "videos/shot_07.mp4"
+        "video": null
       },
       "status": {
         "analyze": "SUCCESS",
         "extract_frames": "SUCCESS",
-        "stylize": "SUCCESS",
-        "video_generate": "SUCCESS"
+        "stylize": "NOT_STARTED",
+        "video_generate": "NOT_STARTED"
       },
       "errors": {
         "video_generate": null,
@@ -1644,13 +2191,13 @@ def run_pipeline(job_dir: Path, target_shot: str | None = None) -> None:
       "assets": {
         "first_frame": "frames/shot_08.png",
         "stylized_frame": "stylized_frames/shot_08.png",
-        "video": "videos/shot_08.mp4"
+        "video": null
       },
       "status": {
         "analyze": "SUCCESS",
         "extract_frames": "SUCCESS",
-        "stylize": "SUCCESS",
-        "video_generate": "SUCCESS"
+        "stylize": "NOT_STARTED",
+        "video_generate": "NOT_STARTED"
       },
       "errors": {
         "video_generate": null,
@@ -1666,20 +2213,24 @@ def run_pipeline(job_dir: Path, target_shot: str | None = None) -> None:
       "assets": {
         "first_frame": "frames/shot_09.png",
         "stylized_frame": "stylized_frames/shot_09.png",
-        "video": "videos/shot_09.mp4"
+        "video": null
       },
       "status": {
         "analyze": "SUCCESS",
         "extract_frames": "SUCCESS",
-        "stylize": "SUCCESS",
-        "video_generate": "SUCCESS"
+        "stylize": "NOT_STARTED",
+        "video_generate": "NOT_STARTED"
       },
       "errors": {
         "video_generate": null,
         "stylize": null
       }
     }
-  ]
+  ],
+  "meta": {
+    "updated_at": "2026-01-12T08:06:04Z",
+    "attempts": 6
+  }
 }
 </file>
 

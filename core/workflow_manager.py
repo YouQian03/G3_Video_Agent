@@ -20,34 +20,53 @@ class WorkflowManager:
             self.load()
 
     def load(self):
-        """加载状态：只有当任务确实在跑，且新文件出现了，才算 SUCCESS"""
+        """加载状态：支持 5 阶段状态对齐"""
         self.workflow = load_workflow(self.job_dir)
         
+        # 确保存在 global_stages 字段（形态 1 所需）
+        if "global_stages" not in self.workflow:
+            self.workflow["global_stages"] = {
+                "analyze": "SUCCESS",   # 假设初始化时已完成
+                "extract": "SUCCESS",   # 假设初始化时已完成
+                "stylize": "NOT_STARTED",
+                "video_gen": "NOT_STARTED",
+                "merge": "NOT_STARTED"
+            }
+
         updated = False
-        for shot in self.workflow.get("shots", []):
+        shots = self.workflow.get("shots", [])
+        
+        # 检查所有分镜的状态，用于更新 global_stages
+        all_gen_success = True if shots else False
+        any_gen_running = False
+
+        for shot in shots:
             sid = shot.get("shot_id")
             video_output_path = self.job_dir / "videos" / f"{sid}.mp4"
-            
             status_node = shot.get("status", {})
             current_status = status_node.get("video_generate")
             
-            # --- 严谨同步逻辑 ---
-            # 只有在 RUNNING 状态下，检测到视频文件【重新生成】了，才变绿
             if current_status == "RUNNING" and video_output_path.exists():
                 status_node["video_generate"] = "SUCCESS"
                 shot.setdefault("assets", {})["video"] = f"videos/{sid}.mp4"
                 updated = True
-                print(f"✨ 物理确认：分镜 {sid} 已由 AI 生成新视频，状态更正为 SUCCESS")
-            
-            # 如果状态是 SUCCESS 但文件没了，打回 NOT_STARTED
             elif current_status == "SUCCESS" and not video_output_path.exists():
                 status_node["video_generate"] = "NOT_STARTED"
                 shot.setdefault("assets", {})["video"] = None
                 updated = True
+
+            # 统计全局进度
+            if status_node.get("video_generate") != "SUCCESS": all_gen_success = False
+            if status_node.get("video_generate") == "RUNNING": any_gen_running = True
+
+        # 更新全局阶段状态（形态 1 UI 会读取这个）
+        new_stage_status = "SUCCESS" if all_gen_success else ("RUNNING" if any_gen_running else "NOT_STARTED")
+        if self.workflow["global_stages"]["video_gen"] != new_stage_status:
+            self.workflow["global_stages"]["video_gen"] = new_stage_status
+            updated = True
         
         if updated:
             self.save()
-            
         return self.workflow
 
     def save(self):
@@ -55,66 +74,54 @@ class WorkflowManager:
         save_workflow(self.job_dir, self.workflow)
 
     def apply_agent_action(self, action: Dict[str, Any]) -> Dict[str, Any]:
-        """修改指令：改风格的同时，清空所有视频引用路径"""
+        """支持形态 2 (Agent) 和形态 3 (Form) 的修改逻辑"""
         op = action.get("op")
         affected_count = 0
         
+        # 形态 2：全局风格修改
         if op == "set_global_style":
             new_style = action.get("value")
             affected_count = apply_global_style(self.workflow, new_style, cascade=True)
             if affected_count > 0:
                 for shot in self.workflow.get("shots", []):
-                    # 风格变了，旧视频预览必须消失
                     shot.setdefault("assets", {})["video"] = None 
 
-        elif op == "replace_entity_ref":
-            ent_id = action.get("entity_id")
-            new_ref = action.get("new_ref")
-            affected_count = replace_entity_reference(self.workflow, ent_id, new_ref)
-            if affected_count > 0:
-                for shot in self.workflow.get("shots", []):
-                    if ent_id in shot.get("entities", []):
-                        shot.setdefault("assets", {})["video"] = None
+        # 形态 3：单个分镜参数微调 (Higgsfield 风格)
+        elif op == "update_shot_params":
+            shot_id = action.get("shot_id")
+            for shot in self.workflow.get("shots", []):
+                if shot["shot_id"] == shot_id:
+                    # 修改具体字段：prompt, model, duration 等
+                    if "description" in action: shot["description"] = action["description"]
+                    if "video_model" in action: shot.setdefault("config", {})["video_model"] = action["video_model"]
+                    # 只要改了参数，该分镜就得重跑
+                    shot["status"]["video_generate"] = "NOT_STARTED"
+                    shot["assets"]["video"] = None
+                    affected_count = 1
+                    break
 
         if affected_count > 0:
             self.save()
         return {"status": "success", "affected_shots": affected_count}
 
     def run_node(self, node_type: str, shot_id: Optional[str] = None):
-        """执行任务：在发起后台任务前，【立即】删除旧文件"""
-        self.workflow.setdefault("meta", {}).setdefault("attempts", 0)
-        self.workflow["meta"]["attempts"] += 1
-        
-        # --- 核心修复：防止秒变 SUCCESS ---
-        # 如果是视频生成节点，我们直接在主进程里先把文件删了
+        """执行逻辑：自动更新全局阶段状态"""
+        self.workflow["global_stages"]["video_gen"] = "RUNNING"
+        self.save()
+
         if node_type == "video_generate":
-            shots_to_clear = []
-            if shot_id:
-                shots_to_clear = [s for s in self.workflow.get("shots", []) if s["shot_id"] == shot_id]
-            else:
-                shots_to_clear = self.workflow.get("shots", [])
-            
+            shots_to_clear = [s for s in self.workflow.get("shots", [])] if not shot_id else [s for s in self.workflow.get("shots", []) if s["shot_id"] == shot_id]
             for s in shots_to_clear:
                 video_file = self.job_dir / "videos" / f"{s['shot_id']}.mp4"
-                if video_file.exists():
-                    print(f"🗑️ 发令瞬间清理旧视频: {video_file}")
-                    os.remove(video_file)
-                # 立即标记状态并清空引用，确保下一秒轮询拿不到 SUCCESS
-                s.setdefault("status", {})["video_generate"] = "RUNNING"
-                s.setdefault("assets", {})["video"] = None
+                if video_file.exists(): os.remove(video_file)
+                s["status"]["video_generate"] = "RUNNING"
+                s["assets"]["video"] = None
 
-        self.save() # 删完立刻存盘，让前端轮询看到 RUNNING 且没文件的状态
-
-        # 启动后台任务
+        self.save()
         if node_type == "stylize":
             run_stylize(self.job_dir, self.workflow, target_shot=shot_id)
         elif node_type == "video_generate":
             run_video_generate(self.job_dir, self.workflow, target_shot=shot_id)
         
-        self.save()
-
-    def _get_shot_by_id(self, shot_id: str) -> Optional[Dict]:
-        for s in self.workflow.get("shots", []):
-            if s.get("shot_id") == shot_id:
-                return s
-        return None
+        # 跑完后通过 load() 自动更新 global_stages 状态
+        self.load()
