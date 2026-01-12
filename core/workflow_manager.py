@@ -1,6 +1,7 @@
 # core/workflow_manager.py
 import json
 import time
+import os
 from pathlib import Path
 from typing import Dict, List, Any, Optional
 
@@ -23,8 +24,44 @@ class WorkflowManager:
             print(f"⚠️ 警告：找不到 job 目录或 workflow.json：{self.job_dir}")
 
     def load(self):
-        """从磁盘加载最新的 workflow 状态"""
+        """从磁盘加载状态，并根据【文件新鲜度】自动修复状态"""
         self.workflow = load_workflow(self.job_dir)
+        
+        # 获取工作流最后一次被修改的时间（即你输入"黑客帝国"指令的时间）
+        # 如果没有这个时间，我们取一个很旧的时间
+        last_update_str = self.workflow.get("meta", {}).get("updated_at", "2000-01-01T00:00:00Z")
+        
+        # 将 ISO 时间字符串转为 Python 的时间戳
+        try:
+            from datetime import datetime
+            last_update_ts = datetime.strptime(last_update_str, "%Y-%m-%dT%H:%M:%SZ").timestamp()
+        except:
+            last_update_ts = 0
+
+        updated = False
+        for shot in self.workflow.get("shots", []):
+            sid = shot.get("shot_id")
+            video_output_path = self.job_dir / "videos" / f"{sid}.mp4"
+            
+            # 核心逻辑：
+            if video_output_path.exists():
+                # 获取这个视频文件的最后修改时间
+                file_mtime = os.path.getmtime(video_output_path)
+                
+                current_status = shot.get("status", {}).get("video_generate")
+                
+                # 判断标准：
+                # 1. 视频文件必须比工作流更新（说明是针对新风格刚生成的）
+                # 2. 或者当前状态确实卡在 RUNNING
+                if file_mtime > last_update_ts and current_status != "SUCCESS":
+                    shot.setdefault("status", {})["video_generate"] = "SUCCESS"
+                    shot.setdefault("assets", {})["video"] = f"videos/{sid}.mp4"
+                    updated = True
+                    print(f"✨ 智能同步：检测到 {sid} 产生了新视频（早于指令时间），已更新状态。")
+                
+        if updated:
+            self.save()
+            
         return self.workflow
 
     def save(self):

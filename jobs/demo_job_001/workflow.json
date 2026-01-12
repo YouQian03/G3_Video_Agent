@@ -3,7 +3,7 @@
   "source_video": "input.mp4",
   "global": {
     "aspect_ratio": "16:9",
-    "style_prompt": "黑客帝国的感觉",
+    "style_prompt": "赛博朋克风格",
     "video_model": "veo"
   },
   "entities": {
@@ -32,8 +32,8 @@
       "status": {
         "analyze": "SUCCESS",
         "extract_frames": "SUCCESS",
-        "stylize": "SUCCESS",
-        "video_generate": "SUCCESS"
+        "stylize": "NOT_STARTED",
+        "video_generate": "NOT_STARTED"
       },
       "errors": {
         "video_generate": "RuntimeError('下载失败。状态码: 400, 详情: {\\n  \"error\": {\\n    \"code\": 400,\\n    \"message\": \"Invalid value \\\\\"media?key=AIzaSyBgDuk23TmU4r1Btgs8sjhhEiywhOn9NKg\\\\\" for query parameter \\'alt\\'\",\\n    \"status\": \"INVALID_ARGUMENT\"\\n  }\\n}\\n')",
@@ -55,7 +55,7 @@
         "analyze": "SUCCESS",
         "extract_frames": "SUCCESS",
         "stylize": "NOT_STARTED",
-        "video_generate": "NOT_STARTED"
+        "video_generate": "RUNNING"
       },
       "errors": {
         "video_generate": null,
@@ -218,6 +218,7 @@
     }
   ],
   "meta": {
-    "updated_at": "2026-01-12T05:57:37Z"
+    "updated_at": "2026-01-12T06:52:43Z",
+    "attempts": 2
   }
 }

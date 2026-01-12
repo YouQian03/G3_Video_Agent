@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI 爆款二创系统 - Demo</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap');
+        body { font-family: 'Inter', sans-serif; background-color: #0f172a; color: #f8fafc; }
+        .glass { background: rgba(30, 41, 59, 0.7); backdrop-filter: blur(12px); border: 1px solid rgba(255,255,255,0.1); }
+        .custom-scrollbar::-webkit-scrollbar { width: 6px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #334155; border-radius: 10px; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+
+        const App = () => {
+            const [workflow, setWorkflow] = useState(null);
+            const [messages, setMessages] = useState([{ role: 'ai', text: '您好！我是您的 AI 导演助手。我已经准备好帮您二创视频了。您可以试着说：“把风格改成赛博朋克风格”。' }]);
+            const [inputText, setInputText] = useState('');
+            const [loading, setLoading] = useState(false);
+
+            // 1. 获取工作流数据
+            const fetchWorkflow = async () => {
+                try {
+                    const res = await fetch('http://localhost:8000/api/workflow');
+                    const data = await res.json();
+                    setWorkflow(data);
+                } catch (err) { console.error("获取数据失败", err); }
+            };
+
+            useEffect(() => {
+                fetchWorkflow();
+                const timer = setInterval(fetchWorkflow, 3000); // 每3秒轮询一次状态
+                return () => clearInterval(timer);
+            }, []);
+
+            // 2. 发送消息给 Agent
+            const sendMessage = async () => {
+                if (!inputText.trim()) return;
+                const userMsg = inputText;
+                setMessages(prev => [...prev, { role: 'user', text: userMsg }]);
+                setInputText('');
+                setLoading(true);
+
+                try {
+                    const res = await fetch('http://localhost:8000/api/agent/chat', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ message: userMsg })
+                    });
+                    const data = await res.json();
+                    setMessages(prev => [...prev, { role: 'ai', text: `明白！我已执行指令：${JSON.stringify(data.action.op)}。相关分镜已准备重跑。` }]);
+                    fetchWorkflow();
+                } catch (err) {
+                    setMessages(prev => [...prev, { role: 'ai', text: '抱歉，我刚才走神了，请重试。' }]);
+                } finally { setLoading(false); }
+            };
+
+            // 3. 触发生成
+            const triggerRun = async (shotId = null) => {
+                try {
+                    await fetch(`http://localhost:8000/api/run/video_generate${shotId ? `?shot_id=${shotId}` : ''}`, { method: 'POST' });
+                    alert(shotId ? `正在重跑分镜 ${shotId}` : "正在全量生成视频...");
+                } catch (err) { alert("启动失败"); }
+            };
+
+            if (!workflow) return <div className="flex h-screen items-center justify-center">加载引擎中...</div>;
+
+            return (
+                <div className="flex h-screen overflow-hidden p-4 gap-4">
+                    {/* 左侧：工作流展示 */}
+                    <div className="flex-1 flex flex-col gap-4">
+                        <div className="glass rounded-2xl p-6 flex justify-between items-center">
+                            <div>
+                                <h1 className="text-xl font-bold text-white">🎬 AI 爆款二创系统</h1>
+                                <p className="text-sm text-slate-400">当前风格: <span className="text-blue-400">{workflow.global.style_prompt}</span></p>
+                            </div>
+                            <button onClick={() => triggerRun()} className="bg-blue-600 hover:bg-blue-500 px-4 py-2 rounded-lg text-sm font-semibold transition">
+                                全量生成
+                            </button>
+                        </div>
+
+                        <div className="flex-1 overflow-y-auto custom-scrollbar space-y-4 pr-2">
+                            {workflow.shots.map(shot => (
+                                <div key={shot.shot_id} className="glass rounded-xl p-4 flex gap-4 hover:border-blue-500/50 transition">
+                                    <div className="w-48 h-28 bg-slate-800 rounded-lg overflow-hidden relative group">
+                                        {shot.assets.video ? (
+                                            <video src={`http://localhost:8000/api/workflow/../../assets/${shot.assets.video}`} className="w-full h-full object-cover" controls />
+                                        ) : (
+                                            <img src={`http://localhost:8000/api/workflow/../../assets/${shot.assets.stylized_frame || shot.assets.first_frame}`} className="w-full h-full object-cover" />
+                                        )}
+                                        <div className="absolute top-2 left-2 bg-black/60 px-2 py-0.5 rounded text-[10px]">{shot.shot_id}</div>
+                                    </div>
+                                    <div className="flex-1 flex flex-col justify-between">
+                                        <div>
+                                            <p className="text-sm text-slate-200 line-clamp-2">{shot.description}</p>
+                                            <div className="mt-2 flex gap-2">
+                                                <span className={`text-[10px] px-2 py-0.5 rounded-full ${shot.status.video_generate === 'SUCCESS' ? 'bg-green-500/20 text-green-400' : 'bg-yellow-500/20 text-yellow-400'}`}>
+                                                    {shot.status.video_generate}
+                                                </span>
+                                            </div>
+                                        </div>
+                                        <div className="flex justify-end">
+                                            <button onClick={() => triggerRun(shot.shot_id)} className="text-xs text-blue-400 hover:text-blue-300">
+                                                单独重跑
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+
+                    {/* 右侧：Agent 对话 */}
+                    <div className="w-96 flex flex-col glass rounded-2xl overflow-hidden">
+                        <div className="p-4 border-b border-white/10 bg-white/5">
+                            <h2 className="font-semibold flex items-center gap-2">
+                                <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+                                AI 导演助手
+                            </h2>
+                        </div>
+                        <div className="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar">
+                            {messages.map((m, i) => (
+                                <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                                    <div className={`max-w-[80%] p-3 rounded-2xl text-sm ${m.role === 'user' ? 'bg-blue-600 text-white' : 'bg-slate-700 text-slate-200'}`}>
+                                        {m.text}
+                                    </div>
+                                </div>
+                            ))}
+                            {loading && <div className="text-xs text-slate-500 animate-pulse">Agent 正在思考并修改工作流...</div>}
+                        </div>
+                        <div className="p-4 bg-slate-800/50 border-t border-white/10">
+                            <div className="flex gap-2">
+                                <input 
+                                    value={inputText}
+                                    onChange={(e) => setInputText(e.target.value)}
+                                    onKeyDown={(e) => e.key === 'Enter' && sendMessage()}
+                                    placeholder="输入指令，如：换成动漫风格..." 
+                                    className="flex-1 bg-slate-900 border border-white/10 rounded-xl px-4 py-2 text-sm focus:outline-none focus:border-blue-500"
+                                />
+                                <button onClick={sendMessage} className="bg-blue-600 p-2 rounded-xl hover:bg-blue-500">
+                                    <i data-lucide="send" className="w-5 h-5"></i>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+        setTimeout(() => lucide.createIcons(), 500);
+    </script>
+</body>
+</html>
