@@ -3,7 +3,7 @@
   "source_video": "input.mp4",
   "global": {
     "aspect_ratio": "16:9",
-    "style_prompt": "赛博朋克风格",
+    "style_prompt": "二次元动漫风格",
     "video_model": "veo"
   },
   "entities": {
@@ -33,7 +33,7 @@
         "analyze": "SUCCESS",
         "extract_frames": "SUCCESS",
         "stylize": "NOT_STARTED",
-        "video_generate": "NOT_STARTED"
+        "video_generate": "SUCCESS"
       },
       "errors": {
         "video_generate": "RuntimeError('下载失败。状态码: 400, 详情: {\\n  \"error\": {\\n    \"code\": 400,\\n    \"message\": \"Invalid value \\\\\"media?key=AIzaSyBgDuk23TmU4r1Btgs8sjhhEiywhOn9NKg\\\\\" for query parameter \\'alt\\'\",\\n    \"status\": \"INVALID_ARGUMENT\"\\n  }\\n}\\n')",
@@ -49,13 +49,13 @@
       "assets": {
         "first_frame": "frames/shot_02.png",
         "stylized_frame": "stylized_frames/shot_02.png",
-        "video": "videos/shot_02.mp4"
+        "video": null
       },
       "status": {
         "analyze": "SUCCESS",
         "extract_frames": "SUCCESS",
         "stylize": "NOT_STARTED",
-        "video_generate": "RUNNING"
+        "video_generate": "NOT_STARTED"
       },
       "errors": {
         "video_generate": null,
@@ -71,7 +71,7 @@
       "assets": {
         "first_frame": "frames/shot_03.png",
         "stylized_frame": "stylized_frames/shot_03.png",
-        "video": "videos/shot_03.mp4"
+        "video": null
       },
       "status": {
         "analyze": "SUCCESS",
@@ -93,7 +93,7 @@
       "assets": {
         "first_frame": "frames/shot_04.png",
         "stylized_frame": "stylized_frames/shot_04.png",
-        "video": "videos/shot_04.mp4"
+        "video": null
       },
       "status": {
         "analyze": "SUCCESS",
@@ -115,7 +115,7 @@
       "assets": {
         "first_frame": "frames/shot_05.png",
         "stylized_frame": "stylized_frames/shot_05.png",
-        "video": "videos/shot_05.mp4"
+        "video": null
       },
       "status": {
         "analyze": "SUCCESS",
@@ -137,7 +137,7 @@
       "assets": {
         "first_frame": "frames/shot_06.png",
         "stylized_frame": "stylized_frames/shot_06.png",
-        "video": "videos/shot_06.mp4"
+        "video": null
       },
       "status": {
         "analyze": "SUCCESS",
@@ -159,7 +159,7 @@
       "assets": {
         "first_frame": "frames/shot_07.png",
         "stylized_frame": "stylized_frames/shot_07.png",
-        "video": "videos/shot_07.mp4"
+        "video": null
       },
       "status": {
         "analyze": "SUCCESS",
@@ -181,7 +181,7 @@
       "assets": {
         "first_frame": "frames/shot_08.png",
         "stylized_frame": "stylized_frames/shot_08.png",
-        "video": "videos/shot_08.mp4"
+        "video": null
       },
       "status": {
         "analyze": "SUCCESS",
@@ -203,7 +203,7 @@
       "assets": {
         "first_frame": "frames/shot_09.png",
         "stylized_frame": "stylized_frames/shot_09.png",
-        "video": "videos/shot_09.mp4"
+        "video": null
       },
       "status": {
         "analyze": "SUCCESS",
@@ -218,7 +218,7 @@
     }
   ],
   "meta": {
-    "updated_at": "2026-01-12T06:52:43Z",
-    "attempts": 2
+    "updated_at": "2026-01-12T07:45:03Z",
+    "attempts": 4
   }
 }
