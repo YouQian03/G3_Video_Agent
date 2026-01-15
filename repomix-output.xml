@@ -48,12 +48,7 @@ core/
   runner.py
   workflow_io.py
   workflow_manager.py
-jobs/
-  demo_job_001/
-    storyboard.json
-    workflow.json
-outputs/
-  storyboard.json
+.gitignore
 agent_demo.py
 analyze_video.py
 app.py
@@ -65,6 +60,7 @@ run_workflow.py
 smoke_test_core.py
 stylize_frames.py
 test_gemini.py
+test_v3.py
 vibe_check.py
 video_generator.py
 workflow_cli.py
@@ -75,63 +71,6 @@ This section contains the contents of the repository's files.
 
 <file path="core/__init__.py">
 
-</file>
-
-<file path="core/agent_engine.py">
-# core/agent_engine.py
-import os
-import json
-from google import genai
-from typing import Dict, Any
-
-class AgentEngine:
-    def __init__(self):
-        api_key = os.getenv("GEMINI_API_KEY")
-        if not api_key:
-            raise RuntimeError("未检测到 GEMINI_API_KEY")
-        self.client = genai.Client(api_key=api_key)
-        # 修改这里：改为你环境里测试通过的 2.0 版本，这样最稳
-        self.model_id = "gemini-2.0-flash" 
-
-    def get_action_from_text(self, user_input: str, workflow_summary: str) -> Dict[str, Any]:
-        """
-        将用户的自然语言转化为 WorkflowManager 的 Action JSON
-        """
-        system_prompt = f"""
-你是一个专业的视频制作助理。你的任务是分析用户的需求，并将其转化为对工作流的操作指令。
-
-当前工作流摘要:
-{workflow_summary}
-
-支持的操作指令 (Action JSON) 格式如下：
-1. 修改全局风格: {{"op": "set_global_style", "value": "风格描述词"}}
-2. 替换实体参考图: {{"op": "replace_entity_ref", "entity_id": "实体ID", "new_ref": "图片路径"}}
-
-注意：
-- 只输出纯 JSON 格式，不要有任何 Markdown 代码块标签（如 ```json ）。
-- 如果用户说修改整体风格或画风，使用 set_global_style。
-- 如果用户提到修改具体的人物、动物或主体，使用 replace_entity_ref。
-- 如果无法匹配操作，请返回 {{"op": "none", "reason": "理由"}}。
-"""
-        
-        try:
-            # 这里的调用方式保持不变
-            response = self.client.models.generate_content(
-                model=self.model_id,
-                contents=[system_prompt, f"用户需求: {user_input}"]
-            )
-            
-            text = response.text.strip()
-            
-            # 清洗 Gemini 偶尔会返回的 Markdown 标签
-            if "```json" in text:
-                text = text.split("```json")[1].split("```")[0].strip()
-            elif "```" in text:
-                text = text.split("```")[1].split("```")[0].strip()
-                
-            return json.loads(text)
-        except Exception as e:
-            return {"op": "error", "reason": f"解析失败: {str(e)}", "raw": response.text if 'response' in locals() else "No response"}
 </file>
 
 <file path="core/changes.py">
@@ -181,284 +120,24 @@ def save_workflow(job_dir: Path, wf: dict) -> None:
     )
 </file>
 
-<file path="jobs/demo_job_001/storyboard.json">
-[
-  {
-    "shot_number": 1,
-    "frame_description": "A medium shot of a small, fluffy, light-brown dog lying on a wooden floor. Part of a blue water bottle is visible on the left edge of the frame.",
-    "content_analysis": "The focus is on the dog. The environment is domestic.",
-    "start_time": 0.0,
-    "end_time": 1.67,
-    "duration_seconds": 1.67,
-    "shot_type": "Medium Shot",
-    "camera_angle": "Eye-Level",
-    "camera_movement": "Static",
-    "focus_and_depth": "Shallow Depth of Field, focus on the dog",
-    "lighting": "Natural indoor lighting",
-    "music_and_sound": "Song playing in background",
-    "voiceover": null
-  },
-  {
-    "shot_number": 2,
-    "frame_description": "A wide shot of a park with children playing near a small body of water. There are buildings and trees in the background, shot during the daytime.",
-    "content_analysis": "The scene depicts a peaceful park setting with recreational activities.",
-    "start_time": 1.67,
-    "end_time": 4.34,
-    "duration_seconds": 2.67,
-    "shot_type": "Wide Shot",
-    "camera_angle": "Eye-Level",
-    "camera_movement": "Static",
-    "focus_and_depth": "Deep focus, everything in the shot is reasonably sharp",
-    "lighting": "Daylight",
-    "music_and_sound": "Song playing in background",
-    "voiceover": null
-  },
-  {
-    "shot_number": 3,
-    "frame_description": "A wide shot of a dark hill at night with some lights visible in the distance.",
-    "content_analysis": "The shot conveys a sense of darkness and a distant cityscape.",
-    "start_time": 4.34,
-    "end_time": 5.45,
-    "duration_seconds": 1.11,
-    "shot_type": "Wide Shot",
-    "camera_angle": "Low Angle",
-    "camera_movement": "Static",
-    "focus_and_depth": "Deep focus, the hill and distant city are both clear",
-    "lighting": "Night time with limited artificial lighting",
-    "music_and_sound": "Song playing in background",
-    "voiceover": null
-  },
-  {
-    "shot_number": 4,
-    "frame_description": "A wide shot of a beach at sunset with silhouettes of people walking along the shore. Tall buildings are visible in the background.",
-    "content_analysis": "The scene showcases a coastal environment during twilight.",
-    "start_time": 5.45,
-    "end_time": 6.97,
-    "duration_seconds": 1.52,
-    "shot_type": "Wide Shot",
-    "camera_angle": "Eye-Level",
-    "camera_movement": "Static",
-    "focus_and_depth": "Deep focus, buildings and people are visible",
-    "lighting": "Sunset",
-    "music_and_sound": "Song playing in background",
-    "voiceover": null
-  },
-  {
-    "shot_number": 5,
-    "frame_description": "A low angle shot of a grassy hill under a clear blue sky.",
-    "content_analysis": "The shot focuses on natural landscape elements.",
-    "start_time": 6.97,
-    "end_time": 8.18,
-    "duration_seconds": 1.21,
-    "shot_type": "Low Angle Shot",
-    "camera_angle": "Low Angle",
-    "camera_movement": "Static",
-    "focus_and_depth": "Deep focus, grass and sky",
-    "lighting": "Daylight",
-    "music_and_sound": "Song playing in background",
-    "voiceover": null
-  },
-  {
-    "shot_number": 6,
-    "frame_description": "A view looking upwards towards buildings, a street lamp and sky. Cloudy sky partially obscuring buildings.",
-    "content_analysis": "The scene shows buildings and a sky view in an urban area.",
-    "start_time": 8.18,
-    "end_time": 9.41,
-    "duration_seconds": 1.23,
-    "shot_type": "Low Angle Shot",
-    "camera_angle": "Low Angle",
-    "camera_movement": "Static",
-    "focus_and_depth": "Deep focus, building and sky are clear",
-    "lighting": "Cloudy daylight",
-    "music_and_sound": "Song playing in background",
-    "voiceover": null
-  },
-  {
-    "shot_number": 7,
-    "frame_description": "A top-down shot looking down a staircase with a shadow of a person going down.",
-    "content_analysis": "The view shows the perspective of going down the stairs.",
-    "start_time": 9.41,
-    "end_time": 10.67,
-    "duration_seconds": 1.26,
-    "shot_type": "High Angle Shot",
-    "camera_angle": "High Angle",
-    "camera_movement": "Static",
-    "focus_and_depth": "Deep focus, stairs and shadow are clear",
-    "lighting": "Artificial lighting",
-    "music_and_sound": "Song playing in background",
-    "voiceover": null
-  },
-  {
-    "shot_number": 8,
-    "frame_description": "Close up shot of a lizard on a white wall.",
-    "content_analysis": "The focus is on a lizard.",
-    "start_time": 10.67,
-    "end_time": 12.05,
-    "duration_seconds": 1.38,
-    "shot_type": "Close-up",
-    "camera_angle": "Eye-Level",
-    "camera_movement": "Static",
-    "focus_and_depth": "Shallow depth of field, focus on the lizard",
-    "lighting": "Artificial lighting",
-    "music_and_sound": "Song playing in background",
-    "voiceover": null
-  },
-  {
-    "shot_number": 9,
-    "frame_description": "A medium shot of a small, fluffy, light-brown dog lying on a wooden floor. Part of a blue water bottle is visible on the left edge of the frame.",
-    "content_analysis": "The focus is on the dog. The environment is domestic.",
-    "start_time": 12.05,
-    "end_time": 13.43,
-    "duration_seconds": 1.38,
-    "shot_type": "Medium Shot",
-    "camera_angle": "Eye-Level",
-    "camera_movement": "Static",
-    "focus_and_depth": "Shallow Depth of Field, focus on the dog",
-    "lighting": "Natural indoor lighting",
-    "music_and_sound": "Song playing in background",
-    "voiceover": null
-  }
-]
-</file>
+<file path=".gitignore">
+# 忽略 Python 虚拟环境
+venv/
+.venv/
+__pycache__/
+*.pyc
 
-<file path="outputs/storyboard.json">
-[
-  {
-    "shot_number": 1,
-    "frame_description": "A medium shot of a small, fluffy, light-brown dog lying on a wooden floor. Part of a blue water bottle is visible on the left edge of the frame.",
-    "content_analysis": "The focus is on the dog. The environment is domestic.",
-    "start_time": 0.0,
-    "end_time": 1.67,
-    "duration_seconds": 1.67,
-    "shot_type": "Medium Shot",
-    "camera_angle": "Eye-Level",
-    "camera_movement": "Static",
-    "focus_and_depth": "Shallow Depth of Field, focus on the dog",
-    "lighting": "Natural indoor lighting",
-    "music_and_sound": "Song playing in background",
-    "voiceover": null
-  },
-  {
-    "shot_number": 2,
-    "frame_description": "A wide shot of a park with children playing near a small body of water. There are buildings and trees in the background, shot during the daytime.",
-    "content_analysis": "The scene depicts a peaceful park setting with recreational activities.",
-    "start_time": 1.67,
-    "end_time": 4.34,
-    "duration_seconds": 2.67,
-    "shot_type": "Wide Shot",
-    "camera_angle": "Eye-Level",
-    "camera_movement": "Static",
-    "focus_and_depth": "Deep focus, everything in the shot is reasonably sharp",
-    "lighting": "Daylight",
-    "music_and_sound": "Song playing in background",
-    "voiceover": null
-  },
-  {
-    "shot_number": 3,
-    "frame_description": "A wide shot of a dark hill at night with some lights visible in the distance.",
-    "content_analysis": "The shot conveys a sense of darkness and a distant cityscape.",
-    "start_time": 4.34,
-    "end_time": 5.45,
-    "duration_seconds": 1.11,
-    "shot_type": "Wide Shot",
-    "camera_angle": "Low Angle",
-    "camera_movement": "Static",
-    "focus_and_depth": "Deep focus, the hill and distant city are both clear",
-    "lighting": "Night time with limited artificial lighting",
-    "music_and_sound": "Song playing in background",
-    "voiceover": null
-  },
-  {
-    "shot_number": 4,
-    "frame_description": "A wide shot of a beach at sunset with silhouettes of people walking along the shore. Tall buildings are visible in the background.",
-    "content_analysis": "The scene showcases a coastal environment during twilight.",
-    "start_time": 5.45,
-    "end_time": 6.97,
-    "duration_seconds": 1.52,
-    "shot_type": "Wide Shot",
-    "camera_angle": "Eye-Level",
-    "camera_movement": "Static",
-    "focus_and_depth": "Deep focus, buildings and people are visible",
-    "lighting": "Sunset",
-    "music_and_sound": "Song playing in background",
-    "voiceover": null
-  },
-  {
-    "shot_number": 5,
-    "frame_description": "A low angle shot of a grassy hill under a clear blue sky.",
-    "content_analysis": "The shot focuses on natural landscape elements.",
-    "start_time": 6.97,
-    "end_time": 8.18,
-    "duration_seconds": 1.21,
-    "shot_type": "Low Angle Shot",
-    "camera_angle": "Low Angle",
-    "camera_movement": "Static",
-    "focus_and_depth": "Deep focus, grass and sky",
-    "lighting": "Daylight",
-    "music_and_sound": "Song playing in background",
-    "voiceover": null
-  },
-  {
-    "shot_number": 6,
-    "frame_description": "A view looking upwards towards buildings, a street lamp and sky. Cloudy sky partially obscuring buildings.",
-    "content_analysis": "The scene shows buildings and a sky view in an urban area.",
-    "start_time": 8.18,
-    "end_time": 9.41,
-    "duration_seconds": 1.23,
-    "shot_type": "Low Angle Shot",
-    "camera_angle": "Low Angle",
-    "camera_movement": "Static",
-    "focus_and_depth": "Deep focus, building and sky are clear",
-    "lighting": "Cloudy daylight",
-    "music_and_sound": "Song playing in background",
-    "voiceover": null
-  },
-  {
-    "shot_number": 7,
-    "frame_description": "A top-down shot looking down a staircase with a shadow of a person going down.",
-    "content_analysis": "The view shows the perspective of going down the stairs.",
-    "start_time": 9.41,
-    "end_time": 10.67,
-    "duration_seconds": 1.26,
-    "shot_type": "High Angle Shot",
-    "camera_angle": "High Angle",
-    "camera_movement": "Static",
-    "focus_and_depth": "Deep focus, stairs and shadow are clear",
-    "lighting": "Artificial lighting",
-    "music_and_sound": "Song playing in background",
-    "voiceover": null
-  },
-  {
-    "shot_number": 8,
-    "frame_description": "Close up shot of a lizard on a white wall.",
-    "content_analysis": "The focus is on a lizard.",
-    "start_time": 10.67,
-    "end_time": 12.05,
-    "duration_seconds": 1.38,
-    "shot_type": "Close-up",
-    "camera_angle": "Eye-Level",
-    "camera_movement": "Static",
-    "focus_and_depth": "Shallow depth of field, focus on the lizard",
-    "lighting": "Artificial lighting",
-    "music_and_sound": "Song playing in background",
-    "voiceover": null
-  },
-  {
-    "shot_number": 9,
-    "frame_description": "A medium shot of a small, fluffy, light-brown dog lying on a wooden floor. Part of a blue water bottle is visible on the left edge of the frame.",
-    "content_analysis": "The focus is on the dog. The environment is domestic.",
-    "start_time": 12.05,
-    "end_time": 13.43,
-    "duration_seconds": 1.38,
-    "shot_type": "Medium Shot",
-    "camera_angle": "Eye-Level",
-    "camera_movement": "Static",
-    "focus_and_depth": "Shallow Depth of Field, focus on the dog",
-    "lighting": "Natural indoor lighting",
-    "music_and_sound": "Song playing in background",
-    "voiceover": null
-  }
-]
+# 忽略敏感信息
+.env
+
+# 忽略生成的大型资源文件（只传代码，不传素材）
+jobs/
+downloads/
+outputs/
+frames/
+stylized_frames/
+all_code.txt
+repomix-output.xml
 </file>
 
 <file path="agent_demo.py">
@@ -636,99 +315,6 @@ def main():
 
 if __name__ == "__main__":
     main()
-</file>
-
-<file path="app.py">
-# app.py
-import os
-from fastapi import FastAPI, HTTPException, BackgroundTasks
-from fastapi.staticfiles import StaticFiles
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
-from pydantic import BaseModel
-from typing import Optional, Dict, Any
-
-from core.workflow_manager import WorkflowManager
-from core.agent_engine import AgentEngine
-
-app = FastAPI(title="AI 爆款二创系统 API")
-
-# 1. 解决跨域问题（方便前端调用）
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# 2. 初始化核心引擎
-# 暂时硬编码 job_id 为 demo_job_001
-JOB_ID = "demo_job_001"
-manager = WorkflowManager(JOB_ID)
-agent = AgentEngine()
-
-# --- 数据模型 ---
-class ChatRequest(BaseModel):
-    message: str
-
-class ActionRequest(BaseModel):
-    op: str
-    value: Optional[str] = None
-    entity_id: Optional[str] = None
-    new_ref: Optional[str] = None
-    shot_id: Optional[str] = None
-
-# --- 路由接口 ---
-
-@app.get("/")
-async def read_index():
-    """主页：直接返回前端 HTML 文件"""
-    return FileResponse('index.html')
-
-@app.get("/api/workflow")
-async def get_workflow():
-    """获取当前完整的工作流状态"""
-    manager.load()  # 强迫指挥官重新读一遍硬盘上的 workflow.json
-    return manager.workflow
-
-@app.post("/api/agent/chat")
-async def agent_chat(req: ChatRequest):
-    """形态 2：Agent 对话接口"""
-    wf = manager.load()
-    summary = f"Style: {wf.get('global', {}).get('style_prompt')}\n"
-    summary += f"Entities: {list(wf.get('entities', {}).keys())}"
-    
-    action = agent.get_action_from_text(req.message, summary)
-    
-    if action.get("op") not in ["none", "error"]:
-        res = manager.apply_agent_action(action)
-        return {"action": action, "result": res}
-    else:
-        return {"action": action, "result": {"status": "ignored", "reason": action.get("reason")}}
-
-@app.post("/api/action")
-async def manual_action(req: ActionRequest):
-    """形态 3：直接参数修改接口"""
-    res = manager.apply_agent_action(req.dict())
-    return res
-
-@app.post("/api/run/{node_type}")
-async def run_task(node_type: str, background_tasks: BackgroundTasks, shot_id: Optional[str] = None):
-    """形态 1：执行任务（异步运行）"""
-    if node_type not in ["stylize", "video_generate"]:
-        raise HTTPException(status_code=400, detail="无效的节点类型")
-    
-    background_tasks.add_task(manager.run_node, node_type, shot_id)
-    return {"status": "started", "node": node_type, "shot_id": shot_id}
-
-# 3. 挂载静态文件（放在路由后面，确保不遮挡 API）
-# 映射 jobs 目录，让前端可以访问到图片和视频
-app.mount("/assets", StaticFiles(directory=f"jobs/{JOB_ID}"), name="assets")
-
-if __name__ == "__main__":
-    import uvicorn
-    # 启动命令：python app.py
-    uvicorn.run(app, host="0.0.0.0", port=8000)
 </file>
 
 <file path="apply_changes.py">
@@ -1301,6 +887,27 @@ if __name__ == "__main__":
     main()
 </file>
 
+<file path="test_v3.py">
+# test_v3.py
+from core.workflow_manager import WorkflowManager
+
+manager = WorkflowManager("demo_job_001")
+
+# 测试形态 3：手动微调第 2 个镜头的描述
+print("测试形态 3：手动微调分镜...")
+manager.apply_agent_action({
+    "op": "update_shot_params",
+    "shot_id": "shot_02",
+    "description": "一只正在戴着墨镜跳舞的酷狗"
+})
+
+manager.load()
+shot2 = [s for s in manager.workflow["shots"] if s["shot_id"] == "shot_02"][0]
+print(f"分镜 2 新描述: {shot2['description']}")
+print(f"分镜 2 状态已重置: {shot2['status']['video_generate']}") # 应该是 NOT_STARTED
+print(f"全局 Video Gen 阶段状态: {manager.workflow['global_stages']['video_gen']}")
+</file>
+
 <file path="vibe_check.py">
 # vibe_check.py
 from core.workflow_manager import WorkflowManager
@@ -1481,194 +1088,563 @@ if __name__ == "__main__":
     main()
 </file>
 
+<file path="core/agent_engine.py">
+# core/agent_engine.py
+import os
+import json
+import re
+from google import genai
+from google.genai import types # 💡 引入类型定义
+from typing import Dict, Any, List, Union
+
+class AgentEngine:
+    def __init__(self):
+        api_key = os.getenv("GEMINI_API_KEY")
+        if not api_key:
+            raise RuntimeError("未检测到 GEMINI_API_KEY")
+        self.client = genai.Client(api_key=api_key)
+        self.model_id = "gemini-2.0-flash" 
+
+    def get_action_from_text(self, user_input: str, workflow_summary: str) -> Union[Dict, List]:
+        system_prompt = f"""
+你是一个专业的视频导演助理。你必须根据用户需求生成工作流修改指令。
+
+[当前状态摘要]
+{workflow_summary}
+
+[指令规范]
+1. 修改全局风格: {{"op": "set_global_style", "value": "英文风格词"}}
+2. 替换主体名词: {{"op": "global_subject_swap", "old_subject": "英文原词", "new_subject": "英文新词"}}
+   - 注意：你必须根据摘要识别描述中的英文原词（如: dog），并翻译用户的要求（如: 狗->dog, 猫->cat）。
+
+[输出要求]
+- 必须识别用户的所有意图。
+- 必须返回一个包含指令对象的列表 []。
+- 严禁输出任何解释性文字，只输出纯 JSON。
+"""
+        try:
+            # 💡 核心升级：强迫模型输出符合 JSON 结构的格式
+            response = self.client.models.generate_content(
+                model=self.model_id,
+                contents=[system_prompt, f"用户指令: {user_input}"],
+                config=types.GenerateContentConfig(
+                    response_mime_type='application/json', # 👈 强制 JSON 模式
+                )
+            )
+            
+            # 直接解析，JSON 模式下模型返回的一定是合法的 JSON 字符串
+            res_json = json.loads(response.text)
+            print(f"🤖 Agent 决策结果: {res_json}")
+            return res_json
+            
+        except Exception as e:
+            # 增加更详细的错误打印
+            print(f"❌ Agent 调用出现异常: {str(e)}")
+            if 'response' in locals() and hasattr(response, 'candidates'):
+                print(f"🔍 调试信息 - 停止原因: {response.candidates[0].finish_reason}")
+            return {"op": "error", "reason": str(e)}
+</file>
+
+<file path="app.py">
+# app.py
+import os
+from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi.staticfiles import StaticFiles
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from pydantic import BaseModel
+from typing import Optional, Dict, Any, List, Union
+
+from core.workflow_manager import WorkflowManager
+from core.agent_engine import AgentEngine
+
+app = FastAPI(title="AI 导演工作台 API")
+
+# 1. 跨域配置
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# 2. 初始化核心引擎
+JOB_ID = "demo_job_001"
+manager = WorkflowManager(JOB_ID)
+agent = AgentEngine()
+
+# --- 数据模型 ---
+class ChatRequest(BaseModel):
+    message: str
+
+class ShotUpdateRequest(BaseModel):
+    shot_id: str
+    description: Optional[str] = None
+    video_model: Optional[str] = None
+
+# --- 路由接口 ---
+
+@app.get("/")
+async def read_index():
+    """入口：返回主页"""
+    return FileResponse('index.html')
+
+@app.get("/api/workflow")
+async def get_workflow():
+    """形态 1 & 3 的数据源：获取最新全局状态"""
+    # 每次请求强制从磁盘读取最新状态，确保多进程间数据对齐
+    return manager.load()
+
+@app.post("/api/agent/chat")
+async def agent_chat(req: ChatRequest):
+    """形态 2：Agent 全局指挥 (支持多指令和自动翻译替换)"""
+    wf = manager.load()
+    
+    # 💡 核心优化：提供更显式的上下文摘要
+    # 让 Agent 看到 description 的实际内容（通常是英文），它才知道去替换哪个英文单词
+    example_desc = ""
+    if wf.get("shots") and len(wf.get("shots")) > 0:
+        example_desc = wf.get("shots")[0].get("description", "")
+        
+    summary = f"Global Style: {wf.get('global', {}).get('style_prompt')}\n"
+    summary += f"Current Sample Description: {example_desc}\n" # 👈 让 Agent 识别到 'dog'
+    summary += f"Entities: {list(wf.get('entities', {}).keys())}"
+    
+    # 获取 Agent 的决策（支持 JSON 列表）
+    action = agent.get_action_from_text(req.message, summary)
+    
+    # 💡 验证指令有效性
+    is_valid = False
+    if isinstance(action, list):
+        is_valid = len(action) > 0
+    elif isinstance(action, dict):
+        is_valid = action.get("op") not in ["none", "error"]
+        
+    if is_valid:
+        # 执行修改（WorkflowManager 已支持处理 list 或 dict）
+        res = manager.apply_agent_action(action)
+        return {"action": action, "result": res}
+    
+    return {"action": action, "result": {"status": "ignored", "reason": "No valid action parsed or safety filter triggered"}}
+
+@app.post("/api/shot/update")
+async def update_shot_params(req: ShotUpdateRequest):
+    """形态 3：手动微调单个分镜 (Higgsfield 风格)"""
+    action = {
+        "op": "update_shot_params",
+        "shot_id": req.shot_id,
+    }
+    if req.description: action["description"] = req.description
+    if req.video_model: action["video_model"] = req.video_model
+    
+    res = manager.apply_agent_action(action)
+    return res
+
+@app.post("/api/run/{node_type}")
+async def run_task(node_type: str, background_tasks: BackgroundTasks, shot_id: Optional[str] = None):
+    """形态 1 的执行引擎：支持异步运行任务"""
+    if node_type not in ["stylize", "video_generate"]:
+        raise HTTPException(status_code=400, detail="无效的节点类型")
+    
+    # 在后台任务中启动，不阻塞前端请求
+    background_tasks.add_task(manager.run_node, node_type, shot_id)
+    return {"status": "started", "node": node_type, "shot_id": shot_id}
+
+# --- 核心修复：添加防缓存中间件 ---
+@app.middleware("http")
+async def add_no_cache_header(request, call_next):
+    response = await call_next(request)
+    if request.url.path.startswith("/assets"):
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+    return response
+
+# 3. 静态资源挂载
+app.mount("/assets", StaticFiles(directory=f"jobs/{JOB_ID}"), name="assets")
+
+if __name__ == "__main__":
+    import uvicorn
+    # 启动命令：python app.py
+    uvicorn.run(app, host="0.0.0.0", port=8000)
+</file>
+
+<file path="core/workflow_manager.py">
+# core/workflow_manager.py
+import json
+import time
+import os
+import re
+from pathlib import Path
+from typing import Dict, List, Any, Optional, Union
+
+from core.workflow_io import load_workflow, save_workflow
+from core.changes import apply_global_style, replace_entity_reference
+from core.runner import run_pipeline, run_stylize, run_video_generate
+
+class WorkflowManager:
+    def __init__(self, job_id: str, project_root: Optional[Path] = None):
+        self.job_id = job_id
+        self.project_dir = project_root or Path(__file__).parent.parent
+        self.job_dir = self.project_dir / "jobs" / job_id
+        self.workflow: Dict[str, Any] = {}
+        if (self.job_dir / "workflow.json").exists():
+            self.load()
+
+    def load(self):
+        self.workflow = load_workflow(self.job_dir)
+        if "global_stages" not in self.workflow:
+            self.workflow["global_stages"] = {"analyze": "SUCCESS", "extract": "SUCCESS", "stylize": "NOT_STARTED", "video_gen": "NOT_STARTED", "merge": "NOT_STARTED"}
+        
+        updated = False
+        for shot in self.workflow.get("shots", []):
+            sid = shot.get("shot_id")
+            video_output_path = self.job_dir / "videos" / f"{sid}.mp4"
+            status_node = shot.get("status", {})
+            if status_node.get("video_generate") == "RUNNING" and video_output_path.exists():
+                status_node["video_generate"] = "SUCCESS"
+                shot.setdefault("assets", {})["video"] = f"videos/{sid}.mp4"
+                updated = True
+        if updated: self.save()
+        return self.workflow
+
+    def save(self):
+        self.workflow.setdefault("meta", {})["updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        save_workflow(self.job_dir, self.workflow)
+
+    def apply_agent_action(self, action: Union[Dict, List]) -> Dict[str, Any]:
+        actions = action if isinstance(action, list) else [action]
+        total_affected = 0
+        print(f"📦 正在处理 Agent 指令，共 {len(actions)} 条")
+
+        for act in actions:
+            op = act.get("op")
+            print(f"⚙️ 执行操作: {op} | 参数: {act}")
+
+            if op == "set_global_style":
+                val = act.get("value")
+                affected = apply_global_style(self.workflow, val, cascade=True)
+                if affected > 0:
+                    for s in self.workflow.get("shots", []): s.setdefault("assets", {})["video"] = None
+                total_affected += affected
+            
+            elif op == "global_subject_swap":
+                old_s = act.get("old_subject", "").lower()
+                new_s = act.get("new_subject", "").lower()
+                if old_s and new_s:
+                    for s in self.workflow.get("shots", []):
+                        if old_s in s["description"].lower():
+                            s["description"] = re.sub(old_s, new_s, s["description"], flags=re.IGNORECASE)
+                            s["status"]["video_generate"] = "NOT_STARTED"
+                            s["assets"]["video"] = None
+                            total_affected += 1
+                print(f"🐱 替换完成：{old_s} -> {new_s}，影响 {total_affected} 处")
+
+            elif op == "update_shot_params":
+                # 兼容手动精修
+                sid = act.get("shot_id")
+                for s in self.workflow.get("shots", []):
+                    if s["shot_id"] == sid:
+                        if "description" in act: s["description"] = act["description"]
+                        s["status"]["video_generate"] = "NOT_STARTED"
+                        s["assets"]["video"] = None
+                        total_affected += 1
+
+        if total_affected > 0:
+            self.save()
+        return {"status": "success", "affected_shots": total_affected}
+
+    def run_node(self, node_type: str, shot_id: Optional[str] = None):
+        self.workflow["global_stages"]["video_gen"] = "RUNNING"
+        self.save()
+        if node_type == "video_generate":
+            shots = [s for s in self.workflow.get("shots", []) if not shot_id or s["shot_id"] == shot_id]
+            for s in shots:
+                p = self.job_dir / "videos" / f"{s['shot_id']}.mp4"
+                if p.exists(): os.remove(p)
+                s["status"]["video_generate"] = "RUNNING"
+                s["assets"]["video"] = None
+        self.save()
+        if node_type == "stylize": run_stylize(self.job_dir, self.workflow, target_shot=shot_id)
+        elif node_type == "video_generate": run_video_generate(self.job_dir, self.workflow, target_shot=shot_id)
+        self.load()
+</file>
+
 <file path="index.html">
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI 爆款二创系统 - Demo</title>
+    <title>AI 导演工作台 - 工业级放射流</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <style>
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap');
-        body { font-family: 'Inter', sans-serif; background-color: #0f172a; color: #f8fafc; }
-        .glass { background: rgba(30, 41, 59, 0.7); backdrop-filter: blur(12px); border: 1px solid rgba(255,255,255,0.1); }
-        .custom-scrollbar::-webkit-scrollbar { width: 6px; }
-        .custom-scrollbar::-webkit-scrollbar-thumb { background: #334155; border-radius: 10px; }
+        @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Inter:wght@400;600&display=swap');
+        body { font-family: 'Inter', sans-serif; background-color: #020617; color: #f8fafc; }
+        .glass { background: rgba(15, 23, 42, 0.8); backdrop-filter: blur(12px); border: 1px solid rgba(255,255,255,0.05); }
+        
+        /* 💡 连线样式 */
+        .node-line { stroke: #3b82f6; stroke-width: 1.5; fill: none; stroke-opacity: 0.15; transition: stroke-opacity 0.3s; }
+        .node-line-active { stroke: #3b82f6; stroke-width: 2.5; stroke-dasharray: 6; animation: flow 1.5s linear infinite; stroke-opacity: 0.8; }
+        @keyframes flow { from { stroke-dashoffset: 24; } to { stroke-dashoffset: 0; } }
+
+        .custom-scrollbar::-webkit-scrollbar { width: 4px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #1e293b; border-radius: 10px; }
+        
+        /* 固定行高，确保连线计算精准 */
+        .shot-row-container { height: 220px; display: flex; align-items: center; }
     </style>
 </head>
 <body>
     <div id="root"></div>
 
     <script type="text/babel">
-        const { useState, useEffect } = React;
+        const { useState, useEffect, useRef } = React;
 
         const App = () => {
             const [workflow, setWorkflow] = useState(null);
-            const [messages, setMessages] = useState([{ role: 'ai', text: '您好！我是您的 AI 导演助手。建议试试说：“把风格改成赛博朋克风格”。' }]);
+            const [viewMode, setViewMode] = useState('grid'); 
+            const [messages, setMessages] = useState([{ role: 'ai', text: '我是您的 AI 指挥官。工作流已就绪。' }]);
             const [inputText, setInputText] = useState('');
             const [loading, setLoading] = useState(false);
-            const [refreshKey, setRefreshKey] = useState(Date.now());
+            
+            // 💡 状态同步关键：记录滚动位置和容器高度
+            const scrollRef = useRef(null);
+            const [scrollTop, setScrollTop] = useState(0);
+            const [containerHeight, setContainerHeight] = useState(0);
 
-            // 1. 获取工作流数据
             const fetchWorkflow = async () => {
-                try {
-                    const res = await fetch('/api/workflow');
-                    const data = await res.json();
-                    setWorkflow(data);
-                } catch (err) { console.error("获取数据失败", err); }
+                const res = await fetch('/api/workflow');
+                const data = await res.json();
+                setWorkflow(data);
             };
 
             useEffect(() => {
                 fetchWorkflow();
-                const timer = setInterval(fetchWorkflow, 3000); 
+                const timer = setInterval(fetchWorkflow, 3000);
                 return () => clearInterval(timer);
             }, []);
 
-            // 2. 发送消息给 Agent
-            const sendMessage = async () => {
+            // 💡 实时监听滚动
+            const onScroll = (e) => setScrollTop(e.target.scrollTop);
+
+            // 获取容器高度用于计算居中起点
+            useEffect(() => {
+                if (viewMode === 'graph' && scrollRef.current) {
+                    setContainerHeight(scrollRef.current.clientHeight);
+                }
+            }, [viewMode]);
+
+            const sendAgentMsg = async () => {
                 if (!inputText.trim()) return;
-                const userMsg = inputText;
-                setMessages(prev => [...prev, { role: 'user', text: userMsg }]);
-                setInputText('');
+                const msg = inputText; setInputText('');
+                setMessages(prev => [...prev, { role: 'user', text: msg }]);
                 setLoading(true);
-
-                try {
-                    const res = await fetch('/api/agent/chat', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ message: userMsg })
-                    });
-                    const data = await res.json();
-                    const opName = (data.action && data.action.op) ? data.action.op : "指令已接收";
-                    setMessages(prev => [...prev, { role: 'ai', text: `明白！我已执行：${opName}。相关分镜已标记重跑。` }]);
-                    setRefreshKey(Date.now());
-                    fetchWorkflow();
-                } catch (err) {
-                    setMessages(prev => [...prev, { role: 'ai', text: 'Agent 响应超时，请检查后端。' }]);
-                } finally { setLoading(false); }
+                await fetch('/api/agent/chat', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ message: msg }) });
+                setLoading(false);
+                fetchWorkflow();
             };
 
-            // 3. 触发生成
-            const triggerRun = async (shotId = null) => {
-                try {
-                    await fetch(`/api/run/video_generate${shotId ? `?shot_id=${shotId}` : ''}`, { method: 'POST' });
-                    setRefreshKey(Date.now());
-                    fetchWorkflow();
-                } catch (err) { console.error("启动失败", err); }
+            const updateShot = async (shotId, desc) => {
+                await fetch('/api/shot/update', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ shot_id: shotId, description: desc })
+                });
+                fetchWorkflow();
             };
 
-            if (!workflow) return <div className="flex h-screen items-center justify-center">正在连接到 AI 引擎...</div>;
+            const runTask = async (type, shotId = null) => {
+                await fetch(`/api/run/${type}${shotId ? `?shot_id=${shotId}` : ''}`, { method: 'POST' });
+            };
+
+            if (!workflow) return <div className="h-screen flex items-center justify-center font-mono">INITIATING...</div>;
 
             return (
-                <div className="flex h-screen overflow-hidden p-4 gap-4">
-                    {/* 左侧：分镜流 */}
-                    <div className="flex-1 flex flex-col gap-4">
-                        <div className="glass rounded-2xl p-6 flex justify-between items-center">
-                            <div>
-                                <h1 className="text-xl font-bold text-white">🎬 AI 爆款二创系统</h1>
-                                <p className="text-sm text-slate-400 mt-1">当前风格: <span className="text-blue-400 font-semibold">{workflow.global ? workflow.global.style_prompt : "默认"}</span></p>
+                <div className="h-screen flex flex-col p-4 gap-4 overflow-hidden">
+                    {/* Header */}
+                    <div className="glass rounded-2xl p-4 flex items-center justify-between border border-white/5">
+                        <div className="flex items-center gap-6">
+                            <h1 className="text-xl font-bold tracking-tight bg-gradient-to-r from-blue-400 to-emerald-400 bg-clip-text text-transparent">AI CONTENT WORKSTATION</h1>
+                            <div className="flex bg-slate-900 rounded-xl p-1 border border-white/10 shadow-inner">
+                                <button onClick={() => setViewMode('grid')} className={`px-5 py-1.5 rounded-lg text-xs font-bold transition ${viewMode === 'grid' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-500'}`}>STORYBOARD (对比)</button>
+                                <button onClick={() => setViewMode('graph')} className={`px-5 py-1.5 rounded-lg text-xs font-bold transition ${viewMode === 'graph' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-500'}`}>LOGIC GRAPH (放射)</button>
                             </div>
-                            <button onClick={() => triggerRun()} className="bg-blue-600 hover:bg-blue-500 px-6 py-2 rounded-xl text-sm font-bold transition">
-                                全量生成
-                            </button>
                         </div>
-
-                        <div className="flex-1 overflow-y-auto custom-scrollbar space-y-4 pr-2">
-                            {workflow.shots && workflow.shots.map(shot => {
-                                const isSuccess = shot.status && shot.status.video_generate === 'SUCCESS';
-                                const cacheBuster = refreshKey;
-                                
-                                return (
-                                    <div key={shot.shot_id} className={`glass rounded-xl p-4 flex gap-4 border ${isSuccess ? 'border-green-500/30' : 'border-white/5'}`}>
-                                        <div className="w-56 h-32 bg-slate-900 rounded-lg overflow-hidden relative shadow-inner">
-                                            {isSuccess && shot.assets && shot.assets.video ? (
-                                                <video 
-                                                    key={`${shot.shot_id}-${cacheBuster}`}
-                                                    src={`/assets/${shot.assets.video}?t=${cacheBuster}`} 
-                                                    className="w-full h-full object-cover" 
-                                                    controls 
-                                                />
-                                            ) : (
-                                                <div className="w-full h-full relative">
-                                                    <img 
-                                                        src={shot.assets ? `/assets/${shot.assets.stylized_frame || shot.assets.first_frame}?t=${cacheBuster}` : ""} 
-                                                        className="w-full h-full object-cover opacity-50" 
-                                                    />
-                                                    {shot.status && shot.status.video_generate === 'RUNNING' && (
-                                                        <div className="absolute inset-0 flex items-center justify-center bg-black/40">
-                                                            <div className="w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
-                                                        </div>
-                                                    )}
-                                                </div>
-                                            )}
-                                            <div className="absolute top-2 left-2 bg-black/70 px-2 py-0.5 rounded text-[10px] font-mono text-white/80">
-                                                {shot.shot_id}
-                                            </div>
-                                        </div>
-                                        
-                                        <div className="flex-1 flex flex-col justify-between py-1">
-                                            <div>
-                                                <p className="text-sm text-slate-300 italic">"{shot.description}"</p>
-                                                <div className="mt-3 flex items-center gap-2">
-                                                    <span className={`text-[10px] font-bold px-2 py-1 rounded tracking-wider uppercase ${
-                                                        isSuccess ? 'bg-green-500/20 text-green-400' : 
-                                                        (shot.status && shot.status.video_generate === 'RUNNING') ? 'bg-blue-500/20 text-blue-400' :
-                                                        'bg-slate-700/50 text-slate-400'
-                                                    }`}>
-                                                        {shot.status ? shot.status.video_generate : "WAITING"}
-                                                    </span>
-                                                </div>
-                                            </div>
-                                            <div className="flex justify-end">
-                                                <button onClick={() => triggerRun(shot.shot_id)} className="text-xs text-slate-400 hover:text-blue-400">
-                                                    单独重跑
-                                                </button>
-                                            </div>
-                                        </div>
-                                    </div>
-                                );
-                            })}
-                        </div>
+                        <button onClick={() => runTask('video_generate')} className="bg-emerald-600 hover:bg-emerald-500 px-6 py-2 rounded-xl text-sm font-black shadow-lg transition-all active:scale-95">RUN WORKFLOW</button>
                     </div>
 
-                    {/* 右侧：对话 */}
-                    <div className="w-96 flex flex-col glass rounded-2xl overflow-hidden shadow-2xl">
-                        <div className="p-4 border-b border-white/10 bg-white/5">
-                            <h2 className="font-semibold flex items-center gap-2">
-                                <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
-                                AI 导演助手
-                            </h2>
-                        </div>
-                        
-                        <div className="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar bg-slate-900/30">
-                            {messages.map((m, i) => (
-                                <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                                    <div className={`max-w-[85%] p-3 rounded-2xl text-sm ${
-                                        m.role === 'user' ? 'bg-blue-600 text-white' : 'bg-slate-800 text-slate-200'
-                                    }`}>
-                                        {m.text}
+                    <div className="flex flex-1 gap-4 overflow-hidden">
+                        <div className="flex-1 glass rounded-[2.5rem] overflow-hidden relative border border-white/10 shadow-2xl bg-slate-950">
+                            
+                            {/* --- 视图 A：Storyboard 对比 --- */}
+                            {viewMode === 'grid' && (
+                                <div className="h-full overflow-y-auto p-8 custom-scrollbar">
+                                    <div className="grid grid-cols-1 xl:grid-cols-2 gap-8">
+                                        {workflow.shots?.map(shot => {
+                                            const isSuccess = shot.status?.video_generate === 'SUCCESS';
+                                            return (
+                                                <div key={shot.shot_id} className="glass rounded-3xl overflow-hidden border border-white/5 p-4 bg-slate-950/20">
+                                                    <div className="flex justify-between items-center mb-3">
+                                                        <span className="font-mono text-xs text-blue-400 font-bold uppercase tracking-widest">{shot.shot_id}</span>
+                                                        <span className="text-[10px] text-slate-500">{shot.start_time}s - {shot.end_time}s</span>
+                                                    </div>
+                                                    <div className="grid grid-cols-2 gap-4">
+                                                        <div className="relative aspect-video rounded-xl overflow-hidden border border-white/10">
+                                                            <img src={`/assets/${shot.assets?.first_frame}`} className="w-full h-full object-cover" />
+                                                            <div className="absolute top-2 right-2 bg-red-500 text-[8px] px-1.5 py-0.5 font-black rounded text-white">SOURCE</div>
+                                                        </div>
+                                                        <div className={`relative aspect-video rounded-xl overflow-hidden border ${isSuccess ? 'border-emerald-500/40' : 'border-blue-500/20'}`}>
+                                                            {isSuccess && shot.assets?.video ? (
+                                                                <video src={`/assets/${shot.assets.video}?t=${Date.now()}`} className="w-full h-full object-cover" controls autoPlay muted loop />
+                                                            ) : (
+                                                                <div className="flex h-full items-center justify-center bg-slate-900 font-mono text-[9px] text-blue-400 tracking-widest animate-pulse">{shot.status?.video_generate}</div>
+                                                            )}
+                                                            <div className="absolute top-2 right-2 bg-blue-500 text-[8px] px-1.5 py-0.5 font-black rounded text-white uppercase tracking-tighter">AI OUTPUT</div>
+                                                        </div>
+                                                    </div>
+                                                    <div className="mt-4 p-3 bg-slate-900/50 rounded-2xl border border-white/5">
+                                                        <textarea className="w-full bg-transparent border-none text-xs text-slate-300 outline-none h-14 resize-none leading-relaxed italic" defaultValue={shot.description} onBlur={(e) => updateShot(shot.shot_id, e.target.value)} />
+                                                        <div className="flex justify-end mt-2"><button onClick={() => runTask('video_generate', shot.shot_id)} className="text-[9px] text-emerald-400 font-bold uppercase tracking-widest hover:text-emerald-300 transition-colors">Re-Generate</button></div>
+                                                    </div>
+                                                </div>
+                                            );
+                                        })}
                                     </div>
                                 </div>
-                            ))}
-                            {loading && <div className="text-xs text-slate-500 animate-pulse text-center">正在思考指令...</div>}
+                            )}
+
+                            {/* --- 视图 B：真正的放射流图 (固定起点 + 动态连线) --- */}
+                            {viewMode === 'graph' && (
+                                <div className="h-full flex relative overflow-hidden">
+                                    
+                                    {/* 💡 1. 静态背景连线层 (固定在底层) */}
+                                    <svg className="absolute inset-0 w-full h-full pointer-events-none z-10">
+                                        {workflow.shots?.map((shot, i) => {
+                                            // 连线起点：左侧容器宽 350px，Master Source 在其垂直中心
+                                            const startX = 330; 
+                                            const startY = containerHeight / 2;
+                                            
+                                            // 连线终点：右侧分镜列表的每个 Shot 的左边缘中心
+                                            // 算法：初始偏移 40px + 索引 i * 行高 220px + 行高一半 110px - 滚动位移
+                                            const endX = 420;
+                                            const endY = (40 + i * 220 + 110) - scrollTop;
+                                            
+                                            // 如果终点超出了可见范围，淡化连线
+                                            const opacity = (endY < -50 || endY > containerHeight + 50) ? 0 : 1;
+
+                                            return (
+                                                <path key={i} 
+                                                    d={`M ${startX} ${startY} C ${startX + 40} ${startY}, ${endX - 40} ${endY}, ${endX} ${endY}`} 
+                                                    className={`node-line ${shot.status?.video_generate === 'RUNNING' || loading ? 'node-line-active' : ''}`}
+                                                    style={{ strokeOpacity: opacity * (shot.status?.video_generate === 'SUCCESS' ? 0.6 : 0.15) }}
+                                                />
+                                            );
+                                        })}
+                                    </svg>
+
+                                    {/* 💡 2. 左侧固定面板 (不滚动) */}
+                                    <div className="w-[350px] flex-shrink-0 flex items-center justify-center p-8 z-20 border-r border-white/5 relative bg-slate-950">
+                                        <div className="glass p-6 rounded-[2.5rem] border-2 border-red-500/40 w-full shadow-[0_0_50px_rgba(239,68,68,0.15)] relative">
+                                            {/* 物理发射孔 */}
+                                            <div className="absolute -right-1.5 top-1/2 -translate-y-1/2 w-3 h-3 bg-red-500 rounded-full shadow-[0_0_15px_#ef4444]"></div>
+                                            
+                                            <div className="flex items-center gap-3 mb-4">
+                                                <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse"></div>
+                                                <h3 className="text-xs font-black tracking-widest uppercase text-red-500">Master Source</h3>
+                                            </div>
+                                            <div className="aspect-video bg-black rounded-2xl overflow-hidden mb-4 border border-white/10 flex items-center justify-center font-mono text-[10px] text-slate-500 italic text-center px-4">
+                                                {workflow.source_video}
+                                            </div>
+                                            <div className="bg-white/5 p-3 rounded-xl border border-white/5">
+                                                <p className="text-[9px] text-slate-500 uppercase font-black mb-1 tracking-widest">Decomposition Node</p>
+                                                <p className="text-[10px] text-emerald-400 font-mono italic leading-tight">Segmenting input into {workflow.shots?.length} parallel tasks...</p>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    {/* 💡 3. 右侧滚动列表 */}
+                                    <div 
+                                        className="flex-1 overflow-y-auto relative custom-scrollbar z-20" 
+                                        onScroll={onScroll}
+                                        ref={scrollRef}
+                                    >
+                                        <div className="py-10 pl-20 pr-10 space-y-0">
+                                            {workflow.shots?.map((shot, i) => {
+                                                const isSuccess = shot.status?.video_generate === 'SUCCESS';
+                                                const isRunning = shot.status?.video_generate === 'RUNNING';
+                                                return (
+                                                    <div key={shot.shot_id} className="shot-row-container gap-6">
+                                                        {/* 输入层 */}
+                                                        <div className="w-56 glass p-3 rounded-2xl border border-white/10 text-[9px] relative transition-all duration-500 group">
+                                                            {/* 连线接收孔 */}
+                                                            <div className="absolute -left-1.5 top-1/2 -translate-y-1/2 w-2.5 h-2.5 bg-blue-500 rounded-full shadow-[0_0_10px_#3b82f6]"></div>
+                                                            <div className="text-blue-400 font-black tracking-widest uppercase mb-2">Input: Shot #{i+1}</div>
+                                                            <div className="flex gap-2">
+                                                                <img src={`/assets/${shot.assets?.first_frame}`} className="w-12 h-12 rounded-lg object-cover border border-white/10 shadow-lg" />
+                                                                <div className="overflow-hidden">
+                                                                    <p className="text-slate-400 font-mono truncate">{workflow.global?.style_prompt}</p>
+                                                                    <p className="text-slate-500 italic truncate mt-1">"{shot.description}"</p>
+                                                                </div>
+                                                            </div>
+                                                        </div>
+
+                                                        <div className="text-slate-700 font-bold opacity-30 italic">➜</div>
+
+                                                        {/* 处理引擎 */}
+                                                        <div className={`w-40 glass p-3 rounded-2xl border-2 flex flex-col items-center justify-center gap-1 transition-all duration-700 ${isRunning ? 'border-blue-500 bg-blue-500/10 scale-105' : isSuccess ? 'border-emerald-500/50' : 'border-white/10 opacity-40'}`}>
+                                                            <span className="text-[8px] text-slate-500 uppercase font-black tracking-tighter">AI Processor</span>
+                                                            <span className="text-[11px] font-bold font-mono">Veo 3.1</span>
+                                                            <span className={`text-[7px] px-2 py-0.5 rounded-full font-bold uppercase tracking-widest ${isSuccess ? 'bg-emerald-500/20 text-emerald-400' : isRunning ? 'bg-blue-500/20 text-blue-400 animate-pulse' : 'bg-slate-800 text-slate-500'}`}>
+                                                                {isSuccess ? 'COMPLETED' : isRunning ? 'WORKING' : 'WAITING'}
+                                                            </span>
+                                                        </div>
+
+                                                        <div className="text-slate-700 font-bold opacity-30 italic">➜</div>
+
+                                                        {/* 输出资源 */}
+                                                        <div className={`w-64 glass p-2 rounded-2xl border transition-all duration-700 ${isSuccess ? 'border-emerald-500/40 bg-emerald-500/5 shadow-2xl scale-105' : 'border-white/5 opacity-40'}`}>
+                                                            <div className="aspect-video bg-black rounded-xl overflow-hidden relative shadow-inner">
+                                                                {isSuccess && shot.assets.video ? (
+                                                                    <video src={`/assets/${shot.assets.video}`} className="w-full h-full object-cover" autoPlay muted loop />
+                                                                ) : (
+                                                                    <div className="h-full flex items-center justify-center text-[8px] text-slate-700 italic font-mono uppercase tracking-widest">asset_pending.mp4</div>
+                                                                )}
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
                         </div>
 
-                        <div className="p-4 bg-slate-800/80 border-t border-white/10">
-                            <div className="flex gap-2">
-                                <input 
-                                    value={inputText}
-                                    onChange={(e) => setInputText(e.target.value)}
-                                    onKeyDown={(e) => e.key === 'Enter' && sendMessage()}
-                                    placeholder="输入指令，如：换成动漫风格..." 
-                                    className="flex-1 bg-slate-950/50 border border-white/10 rounded-xl px-4 py-2 text-sm focus:outline-none focus:border-blue-500 text-white"
-                                />
-                                <button onClick={sendMessage} className="bg-blue-600 px-4 py-2 rounded-xl hover:bg-blue-500 text-sm font-bold">
-                                    发送
-                                </button>
+                        {/* 右侧 Agent 交互 */}
+                        <div className="w-80 flex flex-col glass rounded-[2.5rem] overflow-hidden border border-white/10 shadow-2xl">
+                            <div className="p-5 border-b border-white/5 bg-white/5 flex items-center gap-3">
+                                <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse shadow-[0_0_10px_#10b981]"></div>
+                                <span className="text-xs font-black tracking-widest uppercase text-emerald-400 tracking-tighter">Director Agent</span>
+                            </div>
+                            <div className="flex-1 overflow-y-auto p-5 space-y-5 custom-scrollbar bg-slate-950/20 text-xs">
+                                {messages.map((m, i) => (
+                                    <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                                        <div className={`max-w-[90%] p-3.5 rounded-2xl shadow-sm leading-relaxed ${m.role === 'user' ? 'bg-blue-600 text-white rounded-tr-none' : 'bg-slate-800 text-slate-200 rounded-tl-none border border-white/5'}`}>
+                                            {m.text}
+                                        </div>
+                                    </div>
+                                ))}
+                                {loading && <div className="text-[10px] text-slate-500 font-mono animate-pulse text-center uppercase tracking-widest mt-2">Updating Neural Graph...</div>}
+                            </div>
+                            <div className="p-5 bg-slate-900/80 border-t border-white/10">
+                                <div className="flex gap-2">
+                                    <input value={inputText} onChange={e => setInputText(e.target.value)} onKeyDown={e => e.key === 'Enter' && sendAgentMsg()} placeholder="Command Agent..." className="flex-1 bg-slate-950 border border-white/10 rounded-xl px-4 py-2.5 text-xs outline-none focus:border-blue-500 text-white transition-all shadow-inner" />
+                                    <button onClick={sendAgentMsg} className="bg-blue-600 hover:bg-blue-500 px-4 py-2.5 rounded-xl text-[10px] font-black uppercase transition-all active:scale-95 shadow-lg shadow-blue-900/30">Send</button>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -1681,129 +1657,6 @@ if __name__ == "__main__":
     </script>
 </body>
 </html>
-</file>
-
-<file path="core/workflow_manager.py">
-# core/workflow_manager.py
-import json
-import time
-import os
-from pathlib import Path
-from typing import Dict, List, Any, Optional
-
-from core.workflow_io import load_workflow, save_workflow
-from core.changes import apply_global_style, replace_entity_reference
-from core.runner import run_pipeline, run_stylize, run_video_generate
-
-class WorkflowManager:
-    def __init__(self, job_id: str, project_root: Optional[Path] = None):
-        self.job_id = job_id
-        self.project_dir = project_root or Path(__file__).parent.parent
-        self.job_dir = self.project_dir / "jobs" / job_id
-        self.workflow: Dict[str, Any] = {}
-        
-        if (self.job_dir / "workflow.json").exists():
-            self.load()
-
-    def load(self):
-        """加载状态：只有当任务确实在跑，且新文件出现了，才算 SUCCESS"""
-        self.workflow = load_workflow(self.job_dir)
-        
-        updated = False
-        for shot in self.workflow.get("shots", []):
-            sid = shot.get("shot_id")
-            video_output_path = self.job_dir / "videos" / f"{sid}.mp4"
-            
-            status_node = shot.get("status", {})
-            current_status = status_node.get("video_generate")
-            
-            # --- 严谨同步逻辑 ---
-            # 只有在 RUNNING 状态下，检测到视频文件【重新生成】了，才变绿
-            if current_status == "RUNNING" and video_output_path.exists():
-                status_node["video_generate"] = "SUCCESS"
-                shot.setdefault("assets", {})["video"] = f"videos/{sid}.mp4"
-                updated = True
-                print(f"✨ 物理确认：分镜 {sid} 已由 AI 生成新视频，状态更正为 SUCCESS")
-            
-            # 如果状态是 SUCCESS 但文件没了，打回 NOT_STARTED
-            elif current_status == "SUCCESS" and not video_output_path.exists():
-                status_node["video_generate"] = "NOT_STARTED"
-                shot.setdefault("assets", {})["video"] = None
-                updated = True
-        
-        if updated:
-            self.save()
-            
-        return self.workflow
-
-    def save(self):
-        self.workflow.setdefault("meta", {})["updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-        save_workflow(self.job_dir, self.workflow)
-
-    def apply_agent_action(self, action: Dict[str, Any]) -> Dict[str, Any]:
-        """修改指令：改风格的同时，清空所有视频引用路径"""
-        op = action.get("op")
-        affected_count = 0
-        
-        if op == "set_global_style":
-            new_style = action.get("value")
-            affected_count = apply_global_style(self.workflow, new_style, cascade=True)
-            if affected_count > 0:
-                for shot in self.workflow.get("shots", []):
-                    # 风格变了，旧视频预览必须消失
-                    shot.setdefault("assets", {})["video"] = None 
-
-        elif op == "replace_entity_ref":
-            ent_id = action.get("entity_id")
-            new_ref = action.get("new_ref")
-            affected_count = replace_entity_reference(self.workflow, ent_id, new_ref)
-            if affected_count > 0:
-                for shot in self.workflow.get("shots", []):
-                    if ent_id in shot.get("entities", []):
-                        shot.setdefault("assets", {})["video"] = None
-
-        if affected_count > 0:
-            self.save()
-        return {"status": "success", "affected_shots": affected_count}
-
-    def run_node(self, node_type: str, shot_id: Optional[str] = None):
-        """执行任务：在发起后台任务前，【立即】删除旧文件"""
-        self.workflow.setdefault("meta", {}).setdefault("attempts", 0)
-        self.workflow["meta"]["attempts"] += 1
-        
-        # --- 核心修复：防止秒变 SUCCESS ---
-        # 如果是视频生成节点，我们直接在主进程里先把文件删了
-        if node_type == "video_generate":
-            shots_to_clear = []
-            if shot_id:
-                shots_to_clear = [s for s in self.workflow.get("shots", []) if s["shot_id"] == shot_id]
-            else:
-                shots_to_clear = self.workflow.get("shots", [])
-            
-            for s in shots_to_clear:
-                video_file = self.job_dir / "videos" / f"{s['shot_id']}.mp4"
-                if video_file.exists():
-                    print(f"🗑️ 发令瞬间清理旧视频: {video_file}")
-                    os.remove(video_file)
-                # 立即标记状态并清空引用，确保下一秒轮询拿不到 SUCCESS
-                s.setdefault("status", {})["video_generate"] = "RUNNING"
-                s.setdefault("assets", {})["video"] = None
-
-        self.save() # 删完立刻存盘，让前端轮询看到 RUNNING 且没文件的状态
-
-        # 启动后台任务
-        if node_type == "stylize":
-            run_stylize(self.job_dir, self.workflow, target_shot=shot_id)
-        elif node_type == "video_generate":
-            run_video_generate(self.job_dir, self.workflow, target_shot=shot_id)
-        
-        self.save()
-
-    def _get_shot_by_id(self, shot_id: str) -> Optional[Dict]:
-        for s in self.workflow.get("shots", []):
-            if s.get("shot_id") == shot_id:
-                return s
-        return None
 </file>
 
 <file path="core/runner.py">
@@ -2005,233 +1858,6 @@ def run_pipeline(job_dir: Path, target_shot: str | None = None) -> None:
     run_stylize(job_dir, wf, target_shot=target_shot)
     wf = load_workflow(job_dir)
     run_video_generate(job_dir, wf, target_shot=target_shot)
-</file>
-
-<file path="jobs/demo_job_001/workflow.json">
-{
-  "job_id": "demo_job_001",
-  "source_video": "input.mp4",
-  "global": {
-    "aspect_ratio": "16:9",
-    "style_prompt": "极简线条插画感",
-    "video_model": "veo"
-  },
-  "entities": {
-    "entity_1": {
-      "type": "main_subject",
-      "name": "dog",
-      "reference_image": "stylized_frames/shot_02.png",
-      "notes": "demo entity for global replace"
-    }
-  },
-  "shots": [
-    {
-      "shot_id": "shot_01",
-      "start_time": 0.0,
-      "end_time": 1.67,
-      "description": "A medium shot of a small, fluffy, light-brown dog lying on a wooden floor. Part of a blue water bottle is visible on the left edge of the frame.",
-      "entities": [
-        "entity_1"
-      ],
-      "voiceover": null,
-      "assets": {
-        "first_frame": "frames/shot_01.png",
-        "stylized_frame": "stylized_frames/shot_01.png",
-        "video": null
-      },
-      "status": {
-        "analyze": "SUCCESS",
-        "extract_frames": "SUCCESS",
-        "stylize": "NOT_STARTED",
-        "video_generate": "NOT_STARTED"
-      },
-      "errors": {
-        "video_generate": "RuntimeError('下载失败。状态码: 400, 详情: {\\n  \"error\": {\\n    \"code\": 400,\\n    \"message\": \"Invalid value \\\\\"media?key=AIzaSyBgDuk23TmU4r1Btgs8sjhhEiywhOn9NKg\\\\\" for query parameter \\'alt\\'\",\\n    \"status\": \"INVALID_ARGUMENT\"\\n  }\\n}\\n')",
-        "stylize": null
-      }
-    },
-    {
-      "shot_id": "shot_02",
-      "start_time": 1.67,
-      "end_time": 4.34,
-      "description": "A wide shot of a park with children playing near a small body of water. There are buildings and trees in the background, shot during the daytime.",
-      "voiceover": null,
-      "assets": {
-        "first_frame": "frames/shot_02.png",
-        "stylized_frame": "stylized_frames/shot_02.png",
-        "video": null
-      },
-      "status": {
-        "analyze": "SUCCESS",
-        "extract_frames": "SUCCESS",
-        "stylize": "NOT_STARTED",
-        "video_generate": "NOT_STARTED"
-      },
-      "errors": {
-        "video_generate": null,
-        "stylize": null
-      }
-    },
-    {
-      "shot_id": "shot_03",
-      "start_time": 4.34,
-      "end_time": 5.45,
-      "description": "A wide shot of a dark hill at night with some lights visible in the distance.",
-      "voiceover": null,
-      "assets": {
-        "first_frame": "frames/shot_03.png",
-        "stylized_frame": "stylized_frames/shot_03.png",
-        "video": null
-      },
-      "status": {
-        "analyze": "SUCCESS",
-        "extract_frames": "SUCCESS",
-        "stylize": "NOT_STARTED",
-        "video_generate": "NOT_STARTED"
-      },
-      "errors": {
-        "video_generate": null,
-        "stylize": null
-      }
-    },
-    {
-      "shot_id": "shot_04",
-      "start_time": 5.45,
-      "end_time": 6.97,
-      "description": "A wide shot of a beach at sunset with silhouettes of people walking along the shore. Tall buildings are visible in the background.",
-      "voiceover": null,
-      "assets": {
-        "first_frame": "frames/shot_04.png",
-        "stylized_frame": "stylized_frames/shot_04.png",
-        "video": "videos/shot_04.mp4"
-      },
-      "status": {
-        "analyze": "SUCCESS",
-        "extract_frames": "SUCCESS",
-        "stylize": "NOT_STARTED",
-        "video_generate": "SUCCESS"
-      },
-      "errors": {
-        "video_generate": null,
-        "stylize": null
-      }
-    },
-    {
-      "shot_id": "shot_05",
-      "start_time": 6.97,
-      "end_time": 8.18,
-      "description": "A low angle shot of a grassy hill under a clear blue sky.",
-      "voiceover": null,
-      "assets": {
-        "first_frame": "frames/shot_05.png",
-        "stylized_frame": "stylized_frames/shot_05.png",
-        "video": null
-      },
-      "status": {
-        "analyze": "SUCCESS",
-        "extract_frames": "SUCCESS",
-        "stylize": "NOT_STARTED",
-        "video_generate": "NOT_STARTED"
-      },
-      "errors": {
-        "video_generate": null,
-        "stylize": null
-      }
-    },
-    {
-      "shot_id": "shot_06",
-      "start_time": 8.18,
-      "end_time": 9.41,
-      "description": "A view looking upwards towards buildings, a street lamp and sky. Cloudy sky partially obscuring buildings.",
-      "voiceover": null,
-      "assets": {
-        "first_frame": "frames/shot_06.png",
-        "stylized_frame": "stylized_frames/shot_06.png",
-        "video": null
-      },
-      "status": {
-        "analyze": "SUCCESS",
-        "extract_frames": "SUCCESS",
-        "stylize": "NOT_STARTED",
-        "video_generate": "NOT_STARTED"
-      },
-      "errors": {
-        "video_generate": null,
-        "stylize": null
-      }
-    },
-    {
-      "shot_id": "shot_07",
-      "start_time": 9.41,
-      "end_time": 10.67,
-      "description": "A top-down shot looking down a staircase with a shadow of a person going down.",
-      "voiceover": null,
-      "assets": {
-        "first_frame": "frames/shot_07.png",
-        "stylized_frame": "stylized_frames/shot_07.png",
-        "video": null
-      },
-      "status": {
-        "analyze": "SUCCESS",
-        "extract_frames": "SUCCESS",
-        "stylize": "NOT_STARTED",
-        "video_generate": "NOT_STARTED"
-      },
-      "errors": {
-        "video_generate": null,
-        "stylize": null
-      }
-    },
-    {
-      "shot_id": "shot_08",
-      "start_time": 10.67,
-      "end_time": 12.05,
-      "description": "Close up shot of a lizard on a white wall.",
-      "voiceover": null,
-      "assets": {
-        "first_frame": "frames/shot_08.png",
-        "stylized_frame": "stylized_frames/shot_08.png",
-        "video": null
-      },
-      "status": {
-        "analyze": "SUCCESS",
-        "extract_frames": "SUCCESS",
-        "stylize": "NOT_STARTED",
-        "video_generate": "NOT_STARTED"
-      },
-      "errors": {
-        "video_generate": null,
-        "stylize": null
-      }
-    },
-    {
-      "shot_id": "shot_09",
-      "start_time": 12.05,
-      "end_time": 13.43,
-      "description": "A medium shot of a small, fluffy, light-brown dog lying on a wooden floor. Part of a blue water bottle is visible on the left edge of the frame.",
-      "voiceover": null,
-      "assets": {
-        "first_frame": "frames/shot_09.png",
-        "stylized_frame": "stylized_frames/shot_09.png",
-        "video": null
-      },
-      "status": {
-        "analyze": "SUCCESS",
-        "extract_frames": "SUCCESS",
-        "stylize": "NOT_STARTED",
-        "video_generate": "NOT_STARTED"
-      },
-      "errors": {
-        "video_generate": null,
-        "stylize": null
-      }
-    }
-  ],
-  "meta": {
-    "updated_at": "2026-01-12T08:06:04Z",
-    "attempts": 6
-  }
-}
 </file>
 
 </files>

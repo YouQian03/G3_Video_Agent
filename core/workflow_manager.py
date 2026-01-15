@@ -3,6 +3,9 @@ import json
 import time
 import os
 import re
+import uuid
+import subprocess
+import shutil
 from pathlib import Path
 from typing import Dict, List, Any, Optional, Union
 
@@ -10,52 +13,184 @@ from core.workflow_io import load_workflow, save_workflow
 from core.changes import apply_global_style, replace_entity_reference
 from core.runner import run_pipeline, run_stylize, run_video_generate
 
+# 引入拆解所需的库和逻辑
+from google import genai
+from analyze_video import DIRECTOR_METAPROMPT, wait_until_file_active, extract_json_array
+from extract_frames import to_seconds
+
 class WorkflowManager:
-    def __init__(self, job_id: str, project_root: Optional[Path] = None):
-        self.job_id = job_id
+    def __init__(self, job_id: Optional[str] = None, project_root: Optional[Path] = None):
         self.project_dir = project_root or Path(__file__).parent.parent
-        self.job_dir = self.project_dir / "jobs" / job_id
+        self.job_id = job_id
         self.workflow: Dict[str, Any] = {}
-        if (self.job_dir / "workflow.json").exists():
-            self.load()
+        
+        if job_id:
+            self.job_dir = self.project_dir / "jobs" / job_id
+            if (self.job_dir / "workflow.json").exists():
+                self.load()
+
+    def initialize_from_file(self, temp_video_path: Path) -> str:
+        """
+        全自动初始化管线：
+        1. 创建 Job 目录及其子文件夹
+        2. 调用 Gemini 1.5 Pro 进行语义拆解
+        3. 调用 FFmpeg 提取关键帧和原始视频切片
+        4. 生成初始状态文件
+        """
+        # 1. 生成唯一 ID 并准备文件夹
+        new_id = f"job_{uuid.uuid4().hex[:8]}"
+        self.job_id = new_id
+        self.job_dir = self.project_dir / "jobs" / new_id
+        
+        self.job_dir.mkdir(parents=True, exist_ok=True)
+        (self.job_dir / "frames").mkdir(exist_ok=True)
+        (self.job_dir / "videos").mkdir(exist_ok=True)
+        (self.job_dir / "source_segments").mkdir(exist_ok=True) # 存放原始视频切片
+        
+        # 2. 移动视频到目标位置
+        final_video_path = self.job_dir / "input.mp4"
+        shutil.move(str(temp_video_path), str(final_video_path))
+        
+        # 3. 运行 Gemini 拆解
+        print(f"🚀 [Phase 1] 正在通过 Gemini 拆解视频: {new_id}...")
+        storyboard = self._run_gemini_analysis(final_video_path)
+        
+        # 4. 运行 FFmpeg 提取 (图片 + 视频切片)
+        print(f"🚀 [Phase 2] 正在提取关键帧与原始分镜短片...")
+        self._run_ffmpeg_extraction(final_video_path, storyboard)
+        
+        # 5. 构建初始 workflow 数据
+        shots = []
+        for s in storyboard:
+            shot_num = int(s.get("shot_number", 1))
+            sid = f"shot_{shot_num:02d}"
+            shots.append({
+                "shot_id": sid,
+                "start_time": s.get("start_time"),
+                "end_time": s.get("end_time"),
+                "description": s.get("frame_description") or s.get("content_analysis"),
+                "entities": [],
+                "assets": {
+                    "first_frame": f"frames/{sid}.png",
+                    "source_video_segment": f"source_segments/{sid}.mp4", # 注册切片路径
+                    "stylized_frame": f"frames/{sid}.png",
+                    "video": None
+                },
+                "status": {"video_generate": "NOT_STARTED"}
+            })
+            
+        self.workflow = {
+            "job_id": new_id,
+            "source_video": "input.mp4",
+            "global": {"style_prompt": "Cinematic Realistic", "video_model": "veo"},
+            "global_stages": {
+                "analyze": "SUCCESS", 
+                "extract": "SUCCESS", 
+                "stylize": "NOT_STARTED", 
+                "video_gen": "NOT_STARTED", 
+                "merge": "NOT_STARTED"
+            },
+            "shots": shots,
+            "meta": {"attempts": 0, "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
+        }
+        
+        self.save()
+        print(f"✅ [Done] 视频拆解与切片完成，Job ID: {new_id}")
+        return new_id
+
+    def _run_gemini_analysis(self, video_path: Path):
+        """内部方法：调用 Gemini 视频理解接口"""
+        api_key = os.getenv("GEMINI_API_KEY")
+        client = genai.Client(api_key=api_key)
+        uploaded = client.files.upload(file=str(video_path))
+        video_file = wait_until_file_active(client, uploaded)
+        
+        response = client.models.generate_content(
+            model="gemini-2.0-flash",
+            contents=[DIRECTOR_METAPROMPT, video_file],
+        )
+        return extract_json_array(response.text)
+
+    def _run_ffmpeg_extraction(self, video_path: Path, storyboard: List):
+        """内部方法：使用 FFmpeg 提取帧和视频切片"""
+        ffmpeg_path = "/opt/homebrew/bin/ffmpeg" # 请根据系统实际路径修改
+        
+        for s in storyboard:
+            start = s.get("start_time", 0)
+            end = s.get("end_time", 2)
+            # 确保 start_time 是浮点数格式
+            ts = to_seconds(start)
+            duration = to_seconds(end) - ts
+            
+            shot_num = int(s.get("shot_number", 1))
+            sid = f"shot_{shot_num:02d}"
+            
+            # 1. 提取首帧图片
+            img_out = self.job_dir / "frames" / f"{sid}.png"
+            subprocess.run([
+                ffmpeg_path, "-y", "-ss", str(ts), "-i", str(video_path), 
+                "-frames:v", "1", "-q:v", "2", str(img_out)
+            ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            
+            # 2. 提取视频切片 (使用 -c copy 保证速度和无损)
+            video_segment_out = self.job_dir / "source_segments" / f"{sid}.mp4"
+            subprocess.run([
+                ffmpeg_path, "-y", "-ss", str(ts), "-t", str(duration), 
+                "-i", str(video_path), "-c", "copy", str(video_segment_out)
+            ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
     def load(self):
+        """加载状态并对齐物理文件状态"""
         self.workflow = load_workflow(self.job_dir)
-        if "global_stages" not in self.workflow:
-            self.workflow["global_stages"] = {"analyze": "SUCCESS", "extract": "SUCCESS", "stylize": "NOT_STARTED", "video_gen": "NOT_STARTED", "merge": "NOT_STARTED"}
         
+        # 确保存在全局阶段追踪
+        if "global_stages" not in self.workflow:
+            self.workflow["global_stages"] = {
+                "analyze": "SUCCESS", "extract": "SUCCESS", 
+                "stylize": "NOT_STARTED", "video_gen": "NOT_STARTED", "merge": "NOT_STARTED"
+            }
+
         updated = False
         for shot in self.workflow.get("shots", []):
             sid = shot.get("shot_id")
             video_output_path = self.job_dir / "videos" / f"{sid}.mp4"
             status_node = shot.get("status", {})
-            if status_node.get("video_generate") == "RUNNING" and video_output_path.exists():
+            current_status = status_node.get("video_generate")
+            
+            # 只有在 RUNNING 状态下检测到新文件才变绿，防止旧文件干扰
+            if current_status == "RUNNING" and video_output_path.exists():
                 status_node["video_generate"] = "SUCCESS"
                 shot.setdefault("assets", {})["video"] = f"videos/{sid}.mp4"
                 updated = True
+                print(f"✨ 实时同步：分镜 {sid} 已生成，状态更新为 SUCCESS")
+            
+            # 如果标记为成功但文件丢失，重置状态
+            elif current_status == "SUCCESS" and not video_output_path.exists():
+                status_node["video_generate"] = "NOT_STARTED"
+                shot.setdefault("assets", {})["video"] = None
+                updated = True
+        
         if updated: self.save()
         return self.workflow
 
     def save(self):
+        """持久化当前状态"""
         self.workflow.setdefault("meta", {})["updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         save_workflow(self.job_dir, self.workflow)
 
     def apply_agent_action(self, action: Union[Dict, List]) -> Dict[str, Any]:
+        """处理 Agent 指令或手动精修指令"""
         actions = action if isinstance(action, list) else [action]
         total_affected = 0
-        print(f"📦 正在处理 Agent 指令，共 {len(actions)} 条")
-
         for act in actions:
             op = act.get("op")
-            print(f"⚙️ 执行操作: {op} | 参数: {act}")
-
+            
             if op == "set_global_style":
-                val = act.get("value")
-                affected = apply_global_style(self.workflow, val, cascade=True)
+                affected = apply_global_style(self.workflow, act.get("value"), cascade=True)
                 if affected > 0:
                     for s in self.workflow.get("shots", []): s.setdefault("assets", {})["video"] = None
                 total_affected += affected
-            
+                
             elif op == "global_subject_swap":
                 old_s = act.get("old_subject", "").lower()
                 new_s = act.get("new_subject", "").lower()
@@ -66,10 +201,8 @@ class WorkflowManager:
                             s["status"]["video_generate"] = "NOT_STARTED"
                             s["assets"]["video"] = None
                             total_affected += 1
-                print(f"🐱 替换完成：{old_s} -> {new_s}，影响 {total_affected} 处")
-
+                            
             elif op == "update_shot_params":
-                # 兼容手动精修
                 sid = act.get("shot_id")
                 for s in self.workflow.get("shots", []):
                     if s["shot_id"] == sid:
@@ -77,22 +210,34 @@ class WorkflowManager:
                         s["status"]["video_generate"] = "NOT_STARTED"
                         s["assets"]["video"] = None
                         total_affected += 1
-
-        if total_affected > 0:
-            self.save()
+                        
+        if total_affected > 0: self.save()
         return {"status": "success", "affected_shots": total_affected}
 
     def run_node(self, node_type: str, shot_id: Optional[str] = None):
+        """执行工作流节点"""
         self.workflow["global_stages"]["video_gen"] = "RUNNING"
-        self.save()
+        self.workflow.setdefault("meta", {}).setdefault("attempts", 0)
+        self.workflow["meta"]["attempts"] += 1
+        
         if node_type == "video_generate":
             shots = [s for s in self.workflow.get("shots", []) if not shot_id or s["shot_id"] == shot_id]
             for s in shots:
-                p = self.job_dir / "videos" / f"{s['shot_id']}.mp4"
-                if p.exists(): os.remove(p)
+                # 执行前清理物理文件
+                video_file = self.job_dir / "videos" / f"{s['shot_id']}.mp4"
+                if video_file.exists(): os.remove(video_file)
                 s["status"]["video_generate"] = "RUNNING"
                 s["assets"]["video"] = None
+
         self.save()
-        if node_type == "stylize": run_stylize(self.job_dir, self.workflow, target_shot=shot_id)
-        elif node_type == "video_generate": run_video_generate(self.job_dir, self.workflow, target_shot=shot_id)
+        if node_type == "stylize": 
+            run_stylize(self.job_dir, self.workflow, target_shot=shot_id)
+        elif node_type == "video_generate": 
+            run_video_generate(self.job_dir, self.workflow, target_shot=shot_id)
         self.load()
+
+    def _get_shot_by_id(self, shot_id: str) -> Optional[Dict]:
+        for s in self.workflow.get("shots", []):
+            if s.get("shot_id") == shot_id:
+                return s
+        return None
