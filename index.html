@@ -11,19 +11,14 @@
     <style>
         @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Inter:wght@400;600;900&display=swap');
         body { font-family: 'Inter', sans-serif; background-color: #020617; color: #f8fafc; overflow: hidden; }
-        .glass { background: rgba(15, 23, 42, 0.85); backdrop-filter: blur(16px); border: 1px solid rgba(255,255,255,0.08); }
-        
-        /* 连线动画效果 */
-        .node-line { stroke: #3b82f6; stroke-width: 2; fill: none; stroke-opacity: 0.2; transition: all 0.3s; }
+        .glass { background: rgba(15, 23, 42, 0.8); backdrop-filter: blur(12px); border: 1px solid rgba(255,255,255,0.05); }
+        .node-line { stroke: #3b82f6; stroke-width: 2; fill: none; stroke-opacity: 0.2; transition: stroke-opacity 0.3s; }
         .node-line-active { stroke: #3b82f6; stroke-width: 3; stroke-dasharray: 8; animation: flow 1s linear infinite; stroke-opacity: 1; }
         @keyframes flow { from { stroke-dashoffset: 16; } to { stroke-dashoffset: 0; } }
-
         .custom-scrollbar::-webkit-scrollbar { width: 4px; }
         .custom-scrollbar::-webkit-scrollbar-thumb { background: #1e293b; border-radius: 10px; }
         .canvas-bg { background-image: radial-gradient(circle, #1e293b 1.5px, transparent 1.5px); background-size: 40px 40px; }
         .no-select { user-select: none; }
-        
-        /* 侧边栏过渡 */
         .sidebar-transition { transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1); }
     </style>
 </head>
@@ -36,8 +31,8 @@
         const App = () => {
             const [workflow, setWorkflow] = useState(null);
             const [currentJobId, setCurrentJobId] = useState(null);
-            const [viewMode, setViewMode] = useState('grid'); // 'grid' or 'graph'
-            const [messages, setMessages] = useState([{ role: 'ai', text: '我是您的 AI 导演。请上传视频，我将为您执行结构化拆解和智能二创。' }]);
+            const [viewMode, setViewMode] = useState('grid'); 
+            const [messages, setMessages] = useState([{ role: 'ai', text: '我是您的 AI 指挥官。上传视频后我将开始全自动拆解。' }]);
             const [inputText, setInputText] = useState('');
             const [loading, setLoading] = useState(false);
             const [uploading, setUploading] = useState(false);
@@ -58,6 +53,8 @@
                     if (data && data.job_id) {
                         setWorkflow(data);
                         setCurrentJobId(data.job_id);
+                    } else if (data.error) {
+                        setWorkflow(null);
                     }
                 } catch (e) { console.error("Update failed", e); }
             };
@@ -132,12 +129,11 @@
 
             const getAssetUrl = (path) => path ? `/assets/${currentJobId}/${path}` : "";
 
-            // 💡 几何计算：Master Source 位于所有分镜总高度的中点
-            const SHOT_BLOCK_HEIGHT = 450; 
+            // 💡 连线数学计算：Master Source 位于所有分镜总高度的中点
+            const SHOT_BLOCK_HEIGHT = 480; 
             const totalShotsCount = workflow?.shots?.length || 0;
             const masterSourceY = (totalShotsCount * SHOT_BLOCK_HEIGHT) / 2 - 200;
 
-            // 视图判断
             if (!workflow && !uploading) {
                 return (
                     <div className="h-screen flex items-center justify-center p-4 bg-slate-950">
@@ -161,22 +157,22 @@
                     {/* Header */}
                     <div className="glass rounded-2xl p-4 flex items-center justify-between border border-white/5 z-50">
                         <div className="flex items-center gap-6">
-                            <h1 className="text-xl font-black tracking-tighter bg-gradient-to-r from-blue-400 to-emerald-400 bg-clip-text text-transparent italic">AI DIRECTOR WORKFLOW</h1>
-                            <div className="flex bg-slate-900 rounded-xl p-1 border border-white/10">
-                                <button onClick={() => setViewMode('grid')} className={`px-5 py-1.5 rounded-lg text-xs font-bold transition ${viewMode === 'grid' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-500'}`}>STORYBOARD (对比)</button>
+                            <h1 className="text-xl font-bold tracking-tight bg-gradient-to-r from-blue-400 to-emerald-400 bg-clip-text text-transparent italic uppercase">AI Director Workflow</h1>
+                            <div className="flex bg-slate-900 rounded-xl p-1 border border-white/10 shadow-inner">
+                                <button onClick={() => setViewMode('grid')} className={`px-5 py-1.5 rounded-lg text-xs font-bold transition ${viewMode === 'grid' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-500'}`}>STORYBOARD (精修)</button>
                                 <button onClick={() => setViewMode('graph')} className={`px-5 py-1.5 rounded-lg text-xs font-bold transition ${viewMode === 'graph' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-500'}`}>WORKFLOW (连线)</button>
                             </div>
                         </div>
                         <div className="flex gap-4">
-                            <button onClick={() => { setWorkflow(null); setCurrentJobId(null); }} className="text-[10px] font-black border border-white/10 px-4 py-2 rounded-xl text-slate-500 hover:text-white uppercase tracking-widest">+ New</button>
-                            <button onClick={() => runTask('video_generate')} className="bg-emerald-600 hover:bg-emerald-500 px-8 py-2 rounded-xl text-sm font-black shadow-lg uppercase active:scale-95 transition-all">Execute All</button>
+                            <button onClick={() => { setWorkflow(null); setCurrentJobId(null); }} className="text-[10px] font-black border border-white/10 px-4 py-2 rounded-xl text-slate-500 hover:text-white uppercase tracking-widest">+ New Project</button>
+                            <button onClick={() => runTask('video_generate')} className="bg-emerald-600 hover:bg-emerald-500 px-6 py-2 rounded-xl text-sm font-black shadow-lg uppercase active:scale-95 transition-all">Execute All</button>
                         </div>
                     </div>
 
                     <div className="flex flex-1 gap-4 overflow-hidden relative">
                         {/* 画布主区域 */}
                         <div 
-                            className={`flex-1 glass rounded-[3rem] overflow-hidden relative border border-white/10 no-select ${viewMode === 'graph' ? 'canvas-bg' : ''}`}
+                            className={`flex-1 glass rounded-[2.5rem] overflow-hidden relative border border-white/10 no-select ${viewMode === 'graph' ? 'canvas-bg' : ''}`}
                             onWheel={handleWheel} onMouseDown={handleMouseDown} onMouseMove={handleMouseMove} onMouseUp={handleMouseUp} onMouseLeave={handleMouseUp}
                         >
                             {viewMode === 'grid' ? (
@@ -185,24 +181,24 @@
                                         {workflow.shots?.map(shot => {
                                             const isSuccess = shot.status?.video_generate === 'SUCCESS';
                                             return (
-                                                <div key={shot.shot_id} className="glass rounded-[2rem] border border-white/5 p-6 bg-slate-950/20">
+                                                <div key={shot.shot_id} className="glass rounded-3xl overflow-hidden border border-white/5 p-5 bg-slate-950/20">
                                                     <div className="flex justify-between items-center mb-4 px-2">
                                                         <span className="font-mono text-xs text-blue-400 font-black uppercase tracking-widest">{shot.shot_id}</span>
                                                         <span className="text-[10px] text-slate-500 uppercase tracking-tighter">TS: {shot.start_time}s - {shot.end_time}s</span>
                                                     </div>
                                                     <div className="grid grid-cols-2 gap-6">
                                                         <div className="relative aspect-video rounded-2xl overflow-hidden border border-white/10 bg-black">
-                                                            <video src={getAssetUrl(shot.assets.source_video_segment)} className="w-full h-full object-cover" controls muted loop autoPlay />
+                                                            <video src={getAssetUrl(shot.assets.source_video_segment)} className="w-full h-full object-cover" controls muted loop autoPlay poster={getAssetUrl(shot.assets.first_frame)} />
                                                             <div className="absolute top-3 left-3 bg-red-500 text-[8px] px-2 py-0.5 font-black rounded shadow-lg uppercase">SOURCE</div>
                                                         </div>
                                                         <div className={`relative aspect-video rounded-2xl overflow-hidden border ${isSuccess ? 'border-emerald-500/40 shadow-xl' : 'border-blue-500/20 bg-slate-900'}`}>
-                                                            {isSuccess ? <video src={`${getAssetUrl(shot.assets.video)}?t=${Date.now()}`} className="w-full h-full object-cover" controls autoPlay muted loop /> : <div className="h-full flex items-center justify-center font-mono text-[10px] text-blue-400 animate-pulse">{shot.status?.video_generate}</div>}
-                                                            <div className="absolute top-3 left-3 bg-blue-500 text-[8px] px-2 py-0.5 font-black rounded shadow-lg uppercase">AI OUTPUT</div>
+                                                            {isSuccess ? <video src={`${getAssetUrl(shot.assets.video)}?t=${Date.now()}`} className="w-full h-full object-cover" controls autoPlay muted loop /> : <div className="h-full flex items-center justify-center font-mono text-[9px] text-blue-400 animate-pulse">{shot.status?.video_generate}</div>}
+                                                            <div className="absolute top-3 left-3 bg-blue-500 text-[8px] px-2 py-0.5 font-black rounded shadow-lg uppercase text-white">AI OUTPUT</div>
                                                         </div>
                                                     </div>
                                                     <div className="mt-6 p-5 bg-slate-900/50 rounded-2xl border border-white/5 relative">
                                                         <textarea className="w-full bg-transparent border-none text-[13px] text-slate-300 outline-none h-20 resize-none italic font-medium leading-relaxed" defaultValue={shot.description} onBlur={(e) => updateShot(shot.shot_id, e.target.value)} />
-                                                        <div className="flex justify-end mt-2"><button onClick={() => runTask('video_generate', shot.shot_id)} className="text-[10px] text-emerald-400 font-black uppercase tracking-widest hover:text-emerald-300">Re-Draw</button></div>
+                                                        <div className="flex justify-end mt-2"><button onClick={() => runTask('video_generate', shot.shot_id)} className="text-[10px] text-emerald-400 font-black uppercase tracking-widest hover:text-emerald-300 transition-all">Re-Draw</button></div>
                                                     </div>
                                                 </div>
                                             );
@@ -211,46 +207,44 @@
                                 </div>
                             ) : (
                                 <div className="absolute inset-0 origin-top-left transition-transform duration-75" style={{ transform: `translate(${transform.x}px, ${transform.y}px) scale(${transform.scale})` }}>
-                                    {/* 💡 连线逻辑：从 Master 放射出 N 条线 */}
+                                    {/* 💡 连线逻辑：从固定 Master 放射出 N 条线 */}
                                     <svg className="absolute inset-0 w-[10000px] h-[10000px] pointer-events-none">
                                         {workflow.shots?.map((shot, i) => (
-                                            <path key={i} d={`M 430 ${masterSourceY + 160} C 530 ${masterSourceY + 160}, 530 ${180 + i * SHOT_BLOCK_HEIGHT}, 630 ${180 + i * SHOT_BLOCK_HEIGHT}`} className={`node-line ${shot.status?.video_generate === 'RUNNING' ? 'node-line-active' : ''}`} />
+                                            <path key={i} d={`M 430 ${masterSourceY + 185} C 530 ${masterSourceY + 185}, 530 ${180 + i * SHOT_BLOCK_HEIGHT}, 630 ${180 + i * SHOT_BLOCK_HEIGHT}`} className={`node-line ${shot.status?.video_generate === 'RUNNING' ? 'node-line-active' : ''}`} />
                                         ))}
                                     </svg>
                                     
-                                    {/* 💡 Master Source Node (动态居中) */}
-                                    <div className="absolute left-20 w-[410px] glass p-10 rounded-[4rem] border-2 border-red-500/40 shadow-[0_0_50px_rgba(239,68,68,0.2)]" style={{ top: `${masterSourceY}px` }}>
+                                    {/* 💡 Master Source (现在是播放器) */}
+                                    <div className="absolute left-20 w-[410px] glass p-10 rounded-[4rem] border-2 border-red-500/40 shadow-[0_0_60px_rgba(239,68,68,0.1)]" style={{ top: `${masterSourceY}px` }}>
                                         <div className="absolute -right-3 top-1/2 -translate-y-1/2 w-8 h-8 bg-red-500 rounded-full border-4 border-slate-950 shadow-[0_0_20px_#ef4444]"></div>
-                                        <h3 className="text-xs font-black text-red-500 mb-6 uppercase tracking-[0.2em] italic">ROOT: MASTER SOURCE</h3>
-                                        <div className="aspect-video bg-black rounded-[2.5rem] overflow-hidden border border-white/10 shadow-inner">
-                                            <video src={getAssetUrl('input.mp4')} className="w-full h-full object-cover" controls muted />
+                                        <h3 className="text-xs font-black text-red-500 mb-6 uppercase tracking-widest italic">Root: Master Source</h3>
+                                        <div className="aspect-video bg-black rounded-[2.5rem] overflow-hidden border border-white/10 shadow-2xl">
+                                            <video src={getAssetUrl('input.mp4')} className="w-full h-full object-cover" controls muted loop />
                                         </div>
                                     </div>
 
-                                    {/* 💡 分镜大节点堆栈 */}
+                                    {/* 💡 分镜处理节点 (大尺寸) */}
                                     <div className="absolute left-[630px] top-0 flex flex-col gap-32 py-20">
                                         {workflow.shots?.map((shot, i) => {
                                             const isSuccess = shot.status?.video_generate === 'SUCCESS';
                                             return (
                                                 <div key={shot.shot_id} className="flex items-center gap-20">
-                                                    {/* Input Area */}
-                                                    <div className="w-[550px] glass p-10 rounded-[3.5rem] border border-white/10 relative shadow-2xl">
+                                                    <div className="w-[580px] glass p-10 rounded-[3.5rem] border border-white/10 relative shadow-2xl">
                                                         <div className="absolute -left-3 top-1/2 -translate-y-1/2 w-6 h-6 bg-blue-500 rounded-full border-4 border-slate-950 shadow-[0_0_15px_#3b82f6]"></div>
-                                                        <h4 className="text-blue-400 font-black text-[10px] mb-6 uppercase tracking-[0.3em]">Input Segment #{i+1}</h4>
-                                                        <div className="flex gap-8">
-                                                            <div className="w-44 h-32 rounded-2xl bg-black overflow-hidden border border-white/5"><video src={getAssetUrl(shot.assets.source_video_segment)} className="w-full h-full object-cover" muted autoPlay loop controls /></div>
+                                                        <h4 className="text-blue-400 font-black text-[10px] mb-6 uppercase tracking-[0.3em]">Input Node #{i+1}</h4>
+                                                        <div className="flex gap-8 mb-6">
+                                                            <div className="w-48 h-32 rounded-2xl bg-black overflow-hidden border border-white/5"><video src={getAssetUrl(shot.assets.source_video_segment)} className="w-full h-full object-cover" muted autoPlay loop controls /></div>
                                                             <div className="flex-1">
-                                                                <span className="text-[9px] text-slate-500 font-bold uppercase tracking-widest opacity-60 italic underline decoration-blue-500/30">Local Prompt Editor</span>
+                                                                <span className="text-[10px] text-slate-500 font-bold uppercase tracking-widest opacity-60">Manual Prompt Editor</span>
                                                                 {/* 💡 巨大的精修文本框 */}
-                                                                <textarea className="w-full bg-slate-950/50 border border-white/10 rounded-2xl p-4 text-sm text-slate-200 h-36 mt-4 outline-none focus:border-blue-500/50 transition-all font-medium" defaultValue={shot.description} onBlur={(e) => updateShot(shot.shot_id, e.target.value)} />
+                                                                <textarea className="w-full bg-slate-950/50 border border-white/10 rounded-2xl p-4 text-sm text-slate-200 h-36 mt-4 outline-none focus:border-blue-500/40 transition-all font-medium" defaultValue={shot.description} onBlur={(e) => updateShot(shot.shot_id, e.target.value)} />
                                                             </div>
                                                         </div>
                                                     </div>
-                                                    <div className="text-6xl text-slate-800 font-black italic opacity-20 select-none">→</div>
-                                                    {/* Output Area */}
-                                                    <div className={`w-[550px] glass p-4 rounded-[3.5rem] border transition-all duration-700 ${isSuccess ? 'border-emerald-500/40 bg-emerald-500/5 shadow-[0_0_60px_rgba(16,185,129,0.1)]' : 'border-white/5 opacity-20'}`}>
-                                                        <div className="aspect-video bg-black rounded-[2.5rem] overflow-hidden relative shadow-2xl">
-                                                            {isSuccess ? <video src={`${getAssetUrl(shot.assets.video)}?t=${Date.now()}`} className="w-full h-full object-cover" autoPlay muted loop controls /> : <div className="h-full flex items-center justify-center font-mono text-sm text-slate-800 tracking-[0.8em] uppercase italic">Awaiting Asset</div>}
+                                                    <div className="text-6xl text-slate-800 font-black opacity-10 select-none">→</div>
+                                                    <div className={`w-[580px] glass p-4 rounded-[3.5rem] border transition-all ${isSuccess ? 'border-emerald-500/40 bg-emerald-500/5 shadow-2xl' : 'border-white/5 opacity-20'}`}>
+                                                        <div className="aspect-video bg-black rounded-[2.5rem] overflow-hidden">
+                                                            {isSuccess ? <video src={`${getAssetUrl(shot.assets.video)}?t=${Date.now()}`} className="w-full h-full object-cover" autoPlay muted loop controls /> : <div className="h-full flex items-center justify-center font-mono text-sm text-slate-800 tracking-[0.8em] uppercase italic">Pending</div>}
                                                         </div>
                                                     </div>
                                                 </div>
@@ -261,48 +255,41 @@
                             )}
                         </div>
 
-                        {/* 💡 Agent Sidebar (优化缩放键) */}
+                        {/* 💡 Agent Sidebar (侧边栏集成按钮) */}
                         <div className={`sidebar-transition flex flex-col glass rounded-[3rem] overflow-hidden border border-white/10 shadow-2xl relative ${isAgentVisible ? 'w-96 ml-4' : 'w-0 border-none'}`}>
-                            {/* 💡 浮动缩放按钮 - 在侧边栏边缘 */}
+                            {/* 💡 浮动缩放按钮 */}
                             <button 
                                 onClick={() => setIsAgentVisible(!isAgentVisible)} 
-                                className={`absolute top-10 -left-5 w-10 h-10 glass rounded-full flex items-center justify-center text-blue-400 hover:text-white transition-all z-[100] border border-white/10 shadow-2xl hover:scale-110 active:scale-95 ${!isAgentVisible ? 'translate-x-[-4rem]' : ''}`}
+                                className={`absolute top-1/2 -left-5 -translate-y-1/2 w-10 h-10 glass rounded-full flex items-center justify-center text-blue-400 hover:text-white transition-all z-[100] border border-white/10 shadow-2xl ${!isAgentVisible ? 'translate-x-[-3rem] rotate-180' : ''}`}
                             >
-                                {isAgentVisible ? (
-                                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M11 19l-7-7 7-7m8 14l-7-7 7-7" /></svg>
-                                ) : (
-                                    <svg className="w-5 h-5 rotate-180" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 5l7 7-7 7M5 5l7 7-7 7" /></svg>
-                                )}
+                                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M11 19l-7-7 7-7m8 14l-7-7 7-7" /></svg>
                             </button>
 
                             {isAgentVisible && (
                                 <div className="flex flex-col h-full">
-                                    <div className="p-6 border-b border-white/5 bg-white/5 flex items-center justify-between">
-                                        <h2 className="text-xs font-black uppercase text-emerald-400 tracking-widest">Director Agent</h2>
-                                    </div>
-                                    <div className="flex-1 overflow-y-auto p-6 space-y-6 custom-scrollbar text-[13px] leading-relaxed">
+                                    <div className="p-6 border-b border-white/5 bg-white/5 font-black uppercase text-xs tracking-widest text-emerald-400">Director Agent</div>
+                                    <div className="flex-1 overflow-y-auto p-6 space-y-6 custom-scrollbar text-xs leading-relaxed">
                                         {messages.map((m, i) => (
                                             <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                                                <div className={`max-w-[90%] p-4 rounded-3xl ${m.role === 'user' ? 'bg-blue-600 text-white rounded-tr-none' : 'bg-slate-800 text-slate-200 shadow-xl border border-white/5'}`}>{m.text}</div>
+                                                <div className={`max-w-[90%] p-4 rounded-3xl ${m.role === 'user' ? 'bg-blue-600 text-white rounded-tr-none shadow-lg' : 'bg-slate-800 text-slate-200 border border-white/5 shadow-xl'}`}>{m.text}</div>
                                             </div>
                                         ))}
-                                        {loading && <div className="text-center font-mono text-blue-500 animate-pulse uppercase text-[10px] tracking-widest">Orchestrating...</div>}
                                     </div>
                                     <div className="p-6 bg-slate-900/80 border-t border-white/10">
                                         <div className="flex gap-3">
-                                            <input value={inputText} onChange={e => setInputText(e.target.value)} onKeyDown={e => e.key === 'Enter' && sendAgentMsg()} placeholder="指挥 Agent..." className="flex-1 bg-slate-950 border border-white/10 rounded-2xl px-5 py-3 text-xs outline-none focus:border-blue-500 text-white" />
-                                            <button onClick={sendAgentMsg} className="bg-blue-600 hover:bg-blue-500 px-4 py-2 rounded-2xl font-black text-[10px] uppercase shadow-lg active:scale-90">Send</button>
+                                            <input value={inputText} onChange={e => setInputText(e.target.value)} onKeyDown={e => e.key === 'Enter' && sendAgentMsg()} placeholder="Command..." className="flex-1 bg-slate-950 border border-white/10 rounded-2xl px-5 py-3 text-xs outline-none focus:border-blue-500 text-white transition-all shadow-inner" />
+                                            <button onClick={sendAgentMsg} className="bg-blue-600 hover:bg-blue-500 px-5 py-3 rounded-2xl font-black text-xs transition-all active:scale-90 shadow-lg">Send</button>
                                         </div>
                                     </div>
                                 </div>
                             )}
                         </div>
 
-                        {/* Agent 隐藏后的快速开启按钮 */}
+                        {/* Agent 展开按钮 (仅当隐藏时显示) */}
                         {!isAgentVisible && (
                             <button 
                                 onClick={() => setIsAgentVisible(true)} 
-                                className="fixed bottom-10 right-10 w-14 h-14 bg-blue-600 rounded-full flex items-center justify-center shadow-[0_0_20px_rgba(37,99,235,0.5)] z-50 hover:scale-110 transition-all active:scale-95"
+                                className="fixed bottom-10 right-10 w-14 h-14 bg-blue-600 rounded-full flex items-center justify-center shadow-2xl z-50 hover:scale-110 active:scale-95 transition-all"
                             >
                                 <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" /></svg>
                             </button>

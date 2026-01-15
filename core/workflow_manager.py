@@ -30,14 +30,7 @@ class WorkflowManager:
                 self.load()
 
     def initialize_from_file(self, temp_video_path: Path) -> str:
-        """
-        全自动初始化管线：
-        1. 创建 Job 目录及其子文件夹
-        2. 调用 Gemini 1.5 Pro 进行语义拆解
-        3. 调用 FFmpeg 提取关键帧和原始视频切片
-        4. 生成初始状态文件
-        """
-        # 1. 生成唯一 ID 并准备文件夹
+        """全自动初始化管线"""
         new_id = f"job_{uuid.uuid4().hex[:8]}"
         self.job_id = new_id
         self.job_dir = self.project_dir / "jobs" / new_id
@@ -45,21 +38,17 @@ class WorkflowManager:
         self.job_dir.mkdir(parents=True, exist_ok=True)
         (self.job_dir / "frames").mkdir(exist_ok=True)
         (self.job_dir / "videos").mkdir(exist_ok=True)
-        (self.job_dir / "source_segments").mkdir(exist_ok=True) # 存放原始视频切片
+        (self.job_dir / "source_segments").mkdir(exist_ok=True)
         
-        # 2. 移动视频到目标位置
         final_video_path = self.job_dir / "input.mp4"
         shutil.move(str(temp_video_path), str(final_video_path))
         
-        # 3. 运行 Gemini 拆解
         print(f"🚀 [Phase 1] 正在通过 Gemini 拆解视频: {new_id}...")
         storyboard = self._run_gemini_analysis(final_video_path)
         
-        # 4. 运行 FFmpeg 提取 (图片 + 视频切片)
         print(f"🚀 [Phase 2] 正在提取关键帧与原始分镜短片...")
         self._run_ffmpeg_extraction(final_video_path, storyboard)
         
-        # 5. 构建初始 workflow 数据
         shots = []
         for s in storyboard:
             shot_num = int(s.get("shot_number", 1))
@@ -72,7 +61,7 @@ class WorkflowManager:
                 "entities": [],
                 "assets": {
                     "first_frame": f"frames/{sid}.png",
-                    "source_video_segment": f"source_segments/{sid}.mp4", # 注册切片路径
+                    "source_video_segment": f"source_segments/{sid}.mp4",
                     "stylized_frame": f"frames/{sid}.png",
                     "video": None
                 },
@@ -84,11 +73,8 @@ class WorkflowManager:
             "source_video": "input.mp4",
             "global": {"style_prompt": "Cinematic Realistic", "video_model": "veo"},
             "global_stages": {
-                "analyze": "SUCCESS", 
-                "extract": "SUCCESS", 
-                "stylize": "NOT_STARTED", 
-                "video_gen": "NOT_STARTED", 
-                "merge": "NOT_STARTED"
+                "analyze": "SUCCESS", "extract": "SUCCESS", 
+                "stylize": "NOT_STARTED", "video_gen": "NOT_STARTED", "merge": "NOT_STARTED"
             },
             "shots": shots,
             "meta": {"attempts": 0, "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
@@ -99,12 +85,10 @@ class WorkflowManager:
         return new_id
 
     def _run_gemini_analysis(self, video_path: Path):
-        """内部方法：调用 Gemini 视频理解接口"""
         api_key = os.getenv("GEMINI_API_KEY")
         client = genai.Client(api_key=api_key)
         uploaded = client.files.upload(file=str(video_path))
         video_file = wait_until_file_active(client, uploaded)
-        
         response = client.models.generate_content(
             model="gemini-2.0-flash",
             contents=[DIRECTOR_METAPROMPT, video_file],
@@ -112,43 +96,21 @@ class WorkflowManager:
         return extract_json_array(response.text)
 
     def _run_ffmpeg_extraction(self, video_path: Path, storyboard: List):
-        """内部方法：使用 FFmpeg 提取帧和视频切片"""
-        ffmpeg_path = "/opt/homebrew/bin/ffmpeg" # 请根据系统实际路径修改
-        
+        ffmpeg_path = "/opt/homebrew/bin/ffmpeg"
         for s in storyboard:
-            start = s.get("start_time", 0)
-            end = s.get("end_time", 2)
-            # 确保 start_time 是浮点数格式
-            ts = to_seconds(start)
-            duration = to_seconds(end) - ts
-            
-            shot_num = int(s.get("shot_number", 1))
-            sid = f"shot_{shot_num:02d}"
-            
-            # 1. 提取首帧图片
+            ts = to_seconds(s.get("start_time"))
+            duration = to_seconds(s.get("end_time")) - ts
+            sid = f"shot_{int(s['shot_number']):02d}"
             img_out = self.job_dir / "frames" / f"{sid}.png"
-            subprocess.run([
-                ffmpeg_path, "-y", "-ss", str(ts), "-i", str(video_path), 
-                "-frames:v", "1", "-q:v", "2", str(img_out)
-            ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            
-            # 2. 提取视频切片 (使用 -c copy 保证速度和无损)
+            subprocess.run([ffmpeg_path, "-y", "-ss", str(ts), "-i", str(video_path), "-frames:v", "1", "-q:v", "2", str(img_out)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             video_segment_out = self.job_dir / "source_segments" / f"{sid}.mp4"
-            subprocess.run([
-                ffmpeg_path, "-y", "-ss", str(ts), "-t", str(duration), 
-                "-i", str(video_path), "-c", "copy", str(video_segment_out)
-            ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.run([ffmpeg_path, "-y", "-ss", str(ts), "-t", str(duration), "-i", str(video_path), "-c", "copy", str(video_segment_out)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
     def load(self):
         """加载状态并对齐物理文件状态"""
         self.workflow = load_workflow(self.job_dir)
-        
-        # 确保存在全局阶段追踪
         if "global_stages" not in self.workflow:
-            self.workflow["global_stages"] = {
-                "analyze": "SUCCESS", "extract": "SUCCESS", 
-                "stylize": "NOT_STARTED", "video_gen": "NOT_STARTED", "merge": "NOT_STARTED"
-            }
+            self.workflow["global_stages"] = {"analyze": "SUCCESS", "extract": "SUCCESS", "stylize": "NOT_STARTED", "video_gen": "NOT_STARTED", "merge": "NOT_STARTED"}
 
         updated = False
         for shot in self.workflow.get("shots", []):
@@ -157,13 +119,11 @@ class WorkflowManager:
             status_node = shot.get("status", {})
             current_status = status_node.get("video_generate")
             
-            # 只有在 RUNNING 状态下检测到新文件才变绿，防止旧文件干扰
+            # 💡 只有在 RUNNING 状态下检测到新文件才变绿
             if current_status == "RUNNING" and video_output_path.exists():
                 status_node["video_generate"] = "SUCCESS"
                 shot.setdefault("assets", {})["video"] = f"videos/{sid}.mp4"
                 updated = True
-                print(f"✨ 实时同步：分镜 {sid} 已生成，状态更新为 SUCCESS")
-            
             # 如果标记为成功但文件丢失，重置状态
             elif current_status == "SUCCESS" and not video_output_path.exists():
                 status_node["video_generate"] = "NOT_STARTED"
@@ -174,7 +134,6 @@ class WorkflowManager:
         return self.workflow
 
     def save(self):
-        """持久化当前状态"""
         self.workflow.setdefault("meta", {})["updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         save_workflow(self.job_dir, self.workflow)
 
@@ -188,7 +147,11 @@ class WorkflowManager:
             if op == "set_global_style":
                 affected = apply_global_style(self.workflow, act.get("value"), cascade=True)
                 if affected > 0:
-                    for s in self.workflow.get("shots", []): s.setdefault("assets", {})["video"] = None
+                    for s in self.workflow.get("shots", []):
+                        # 💡 风格变了，物理删除旧视频，防止 load() 误判
+                        v_path = self.job_dir / "videos" / f"{s['shot_id']}.mp4"
+                        if v_path.exists(): os.remove(v_path)
+                        s.setdefault("assets", {})["video"] = None
                 total_affected += affected
                 
             elif op == "global_subject_swap":
@@ -199,6 +162,9 @@ class WorkflowManager:
                         if old_s in s["description"].lower():
                             s["description"] = re.sub(old_s, new_s, s["description"], flags=re.IGNORECASE)
                             s["status"]["video_generate"] = "NOT_STARTED"
+                            # 💡 内容变了，物理删除旧视频
+                            v_path = self.job_dir / "videos" / f"{s['shot_id']}.mp4"
+                            if v_path.exists(): os.remove(v_path)
                             s["assets"]["video"] = None
                             total_affected += 1
                             
@@ -208,8 +174,12 @@ class WorkflowManager:
                     if s["shot_id"] == sid:
                         if "description" in act: s["description"] = act["description"]
                         s["status"]["video_generate"] = "NOT_STARTED"
+                        # 💡 手动精修了，物理删除旧视频，确保保存生效
+                        v_path = self.job_dir / "videos" / f"{sid}.mp4"
+                        if v_path.exists(): os.remove(v_path)
                         s["assets"]["video"] = None
                         total_affected += 1
+                        break
                         
         if total_affected > 0: self.save()
         return {"status": "success", "affected_shots": total_affected}
@@ -223,21 +193,17 @@ class WorkflowManager:
         if node_type == "video_generate":
             shots = [s for s in self.workflow.get("shots", []) if not shot_id or s["shot_id"] == shot_id]
             for s in shots:
-                # 执行前清理物理文件
                 video_file = self.job_dir / "videos" / f"{s['shot_id']}.mp4"
                 if video_file.exists(): os.remove(video_file)
                 s["status"]["video_generate"] = "RUNNING"
                 s["assets"]["video"] = None
 
         self.save()
-        if node_type == "stylize": 
-            run_stylize(self.job_dir, self.workflow, target_shot=shot_id)
-        elif node_type == "video_generate": 
-            run_video_generate(self.job_dir, self.workflow, target_shot=shot_id)
+        if node_type == "stylize": run_stylize(self.job_dir, self.workflow, target_shot=shot_id)
+        elif node_type == "video_generate": run_video_generate(self.job_dir, self.workflow, target_shot=shot_id)
         self.load()
 
     def _get_shot_by_id(self, shot_id: str) -> Optional[Dict]:
         for s in self.workflow.get("shots", []):
-            if s.get("shot_id") == shot_id:
-                return s
+            if s.get("shot_id") == shot_id: return s
         return None

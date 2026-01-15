@@ -46,11 +46,9 @@ async def read_index():
     return FileResponse('index.html')
 
 # 💡 核心新增：视频上传接口
-# app.py 里的 upload_video 函数
-
 @app.post("/api/upload")
 async def upload_video(file: UploadFile = File(...)):
-    print(f"📥 [收到文件] 正在接收上传: {file.filename}") # 💡 这一行会立即显示
+    print(f"📥 [收到文件] 正在接收上传: {file.filename}") 
     try:
         # 1. 保存文件
         temp_dir = Path("temp_uploads")
@@ -114,6 +112,27 @@ async def agent_chat(req: ChatRequest):
         return {"action": action, "result": res}
     return {"action": action, "result": {"status": "error"}}
 
+# 💡 核心修复：手动微调分镜接口
+@app.post("/api/shot/update")
+async def update_shot_params(req: ShotUpdateRequest):
+    """形态 3：手动微调单个分镜 (彻底修复保存逻辑)"""
+    if req.job_id:
+        manager.job_id = req.job_id
+        manager.job_dir = Path(__file__).parent / "jobs" / req.job_id
+    
+    # 确保加载了当前最新的数据
+    manager.load()
+    
+    action = {
+        "op": "update_shot_params",
+        "shot_id": req.shot_id,
+        "description": req.description
+    }
+    
+    res = manager.apply_agent_action(action)
+    print(f"📝 手动精修保存：Job={manager.job_id}, Shot={req.shot_id}, Result={res}")
+    return res
+
 @app.post("/api/run/{node_type}")
 async def run_task(node_type: str, background_tasks: BackgroundTasks, shot_id: Optional[str] = None, job_id: Optional[str] = None):
     # 确保指向正确的 job
@@ -135,7 +154,7 @@ async def add_no_cache_header(request, call_next):
         response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
     return response
 
-# 💡 修改：静态资源挂载到 jobs 根目录，这样我们可以通过 /assets/job_xxx/videos/... 访问
+# 挂载静态资源
 app.mount("/assets", StaticFiles(directory="jobs"), name="assets")
 
 if __name__ == "__main__":
