@@ -63,7 +63,7 @@ class WorkflowManager:
                 "assets": {
                     "first_frame": f"frames/{sid}.png",
                     "source_video_segment": f"source_segments/{sid}.mp4",
-                    "stylized_frame": None, # 💡 修正：必须为 None，强制触发 AI 生图流程
+                    "stylized_frame": None, # 💡 PM逻辑：初始化为空，强制触发 AI 生图流程
                     "video": None
                 },
                 "status": {
@@ -117,11 +117,12 @@ class WorkflowManager:
             self.workflow["global_stages"] = {"analyze": "SUCCESS", "extract": "SUCCESS", "stylize": "NOT_STARTED", "video_gen": "NOT_STARTED", "merge": "NOT_STARTED"}
 
         updated = False
-        for shot in self.workflow.get("shots", []):
+        shots = self.workflow.get("shots", [])
+        for shot in shots:
             sid = shot.get("shot_id")
             status_node = shot.get("status", {})
             
-            # 1. 风格化参考图物理对齐 (定妆图)
+            # 1. 风格化参考图物理对齐
             stylized_path = self.job_dir / "stylized_frames" / f"{sid}.png"
             if stylized_path.exists() and status_node.get("stylize") != "SUCCESS":
                 status_node["stylize"] = "SUCCESS"
@@ -130,14 +131,33 @@ class WorkflowManager:
 
             # 2. 视频产物物理对齐
             video_output_path = self.job_dir / "videos" / f"{sid}.mp4"
-            if video_output_path.exists() and status_node.get("video_generate") != "SUCCESS":
+            current_video_status = status_node.get("video_generate")
+            if video_output_path.exists() and current_video_status != "SUCCESS":
                 status_node["video_generate"] = "SUCCESS"
                 shot.setdefault("assets", {})["video"] = f"videos/{sid}.mp4"
                 updated = True
-            elif status_node.get("video_generate") == "SUCCESS" and not video_output_path.exists():
+            elif not video_output_path.exists() and current_video_status == "SUCCESS":
                 status_node["video_generate"] = "NOT_STARTED"
                 shot.setdefault("assets", {})["video"] = None
                 updated = True
+        
+        # 💡 核心新增：计算合并就绪状态统计
+        failed_count = sum(1 for s in shots if s["status"].get("video_generate") == "FAILED")
+        pending_count = sum(1 for s in shots if s["status"].get("video_generate") in ["NOT_STARTED", "RUNNING"])
+        
+        self.workflow["merge_info"] = {
+            "can_merge": failed_count == 0 and pending_count == 0 and len(shots) > 0,
+            "failed_count": failed_count,
+            "pending_count": pending_count,
+            "message": ""
+        }
+        
+        if failed_count > 0:
+            self.workflow["merge_info"]["message"] = f"⚠️ 有 {failed_count} 个分镜失败，无法拼合"
+        elif pending_count > 0:
+            self.workflow["merge_info"]["message"] = "⏳ 正在等待分镜生成完成..."
+        elif len(shots) > 0:
+            self.workflow["merge_info"]["message"] = "✅ 分镜已全部就绪，可以拼合成片"
         
         if updated: self.save()
         return self.workflow
@@ -168,20 +188,18 @@ class WorkflowManager:
                 total_affected += affected
                 
             elif op == "global_subject_swap":
-                old_s = act.get("old_subject", "").lower()
-                new_s = act.get("new_subject", "").lower()
-                if old_s and new_s:
+                old_subject = act.get("old_subject", "").lower()
+                new_subject = act.get("new_subject", "").lower()
+                if old_subject and new_subject:
                     for s in self.workflow.get("shots", []):
-                        if old_s in s["description"].lower():
-                            s["description"] = re.sub(old_s, new_s, s["description"], flags=re.IGNORECASE)
+                        if old_subject in s["description"].lower():
+                            s["description"] = re.sub(old_subject, new_subject, s["description"], flags=re.IGNORECASE)
                             s["status"]["stylize"] = "NOT_STARTED"
                             s["status"]["video_generate"] = "NOT_STARTED"
-                            
                             v_path = self.job_dir / "videos" / f"{s['shot_id']}.mp4"
                             if v_path.exists(): os.remove(v_path)
                             i_path = self.job_dir / "stylized_frames" / f"{s['shot_id']}.png"
                             if i_path.exists(): os.remove(i_path)
-                            
                             s["assets"]["video"] = None
                             s["assets"]["stylized_frame"] = None
                             total_affected += 1
@@ -206,27 +224,22 @@ class WorkflowManager:
         return {"status": "success", "affected_shots": total_affected}
 
     def run_node(self, node_type: str, shot_id: Optional[str] = None):
-        """💡 核心重组：逻辑编排引擎。确保‘先有图，后有视频’且无死锁"""
+        """逻辑编排引擎。确保‘先有图，后有视频’且无死锁"""
         self.workflow.setdefault("meta", {}).setdefault("attempts", 0)
         self.workflow["meta"]["attempts"] += 1
         
-        # 1. 确定本次操作影响的范围
         target_shots = [s for s in self.workflow.get("shots", []) if not shot_id or s["shot_id"] == shot_id]
 
-        # 2. 依赖项检查：如果要生视频，必须确保风格化图已存在且成功
         if node_type == "video_generate":
             for s in target_shots:
                 if s["status"].get("stylize") != "SUCCESS":
                     print(f"🔗 [Dependency] 分镜 {s['shot_id']} 缺少定妆图，正在前置生成...")
-                    # 直接调用 runner 中的风格化方法
                     run_stylize(self.job_dir, self.workflow, target_shot=s["shot_id"])
-                    # 重新加载确认产物
                     i_file = self.job_dir / "stylized_frames" / f"{s['shot_id']}.png"
                     if i_file.exists(): 
                         s["status"]["stylize"] = "SUCCESS"
                         s["assets"]["stylized_frame"] = f"stylized_frames/{s['shot_id']}.png"
 
-        # 3. 准备执行
         stage_key = "video_gen" if node_type == "video_generate" else "stylize"
         self.workflow["global_stages"][stage_key] = "RUNNING"
 
@@ -244,7 +257,6 @@ class WorkflowManager:
 
         self.save()
 
-        # 4. 正式调用 Runner
         if node_type == "stylize": 
             run_stylize(self.job_dir, self.workflow, target_shot=shot_id)
         elif node_type == "video_generate": 

@@ -19,20 +19,18 @@ def ensure_videos_dir(job_dir: Path) -> Path:
 
 def ai_stylize_frame(job_dir: Path, wf: dict, shot: dict) -> str:
     """
-    💡 终极修复：使用 Imagen 4.0 或 Gemini 2.0 Image Gen 确保定妆图生成成功
+    💡 使用 Imagen 4.0 或 Gemini 2.0 Image Gen 确保定妆图生成成功
     """
     from google import genai
     from google.genai import types
 
     api_key = os.getenv("GEMINI_API_KEY")
-    # Imagen 4.0 和 Gemini 2.0 集成生图通常在 v1beta 或 v1 接口中更稳定
     client = genai.Client(api_key=api_key, http_options={'api_version': 'v1beta'})
     
     src = job_dir / shot["assets"]["first_frame"]
     dst = job_dir / "stylized_frames" / f"{shot['shot_id']}.png"
     dst.parent.mkdir(parents=True, exist_ok=True)
 
-    # 物理清场
     if dst.exists(): os.remove(dst)
 
     global_style = wf.get("global", {}).get("style_prompt", "Cinematic")
@@ -41,7 +39,6 @@ def ai_stylize_frame(job_dir: Path, wf: dict, shot: dict) -> str:
 
     print(f"🖼️  AI 正在尝试生成定妆图: {shot['shot_id']}")
 
-    # 💡 策略 1：使用你列表里存在的 Imagen 4.0
     try:
         print(f"📡 尝试调用 Imagen 4.0 (models/imagen-4.0-generate-001)...")
         response = client.models.generate_images(
@@ -63,10 +60,8 @@ def ai_stylize_frame(job_dir: Path, wf: dict, shot: dict) -> str:
     except Exception as e:
         print(f"⚠️ Imagen 4.0 调用失败: {str(e)[:100]}...")
 
-    # 💡 策略 2：使用你列表里的 Gemini 2.0 集成生图模型 (这种方式通常不会 404)
     try:
         print(f"📡 尝试调用集成生图模型 (models/gemini-2.0-flash-exp-image-generation)...")
-        # 这种模型支持 Image 模态，通过 generate_content 调用
         response = client.models.generate_content(
             model="models/gemini-2.0-flash-exp-image-generation",
             contents=prompt,
@@ -83,7 +78,6 @@ def ai_stylize_frame(job_dir: Path, wf: dict, shot: dict) -> str:
     except Exception as e:
         print(f"❌ 所有生图模型均失败: {str(e)[:100]}...")
 
-    # 兜底逻辑
     print("⚠️ 执行原图占位。")
     shutil.copyfile(src, dst)
     return f"stylized_frames/{dst.name}"
@@ -105,7 +99,6 @@ def veo_generate_video(job_dir: Path, wf: dict, shot: dict) -> str:
     from google.genai import types
 
     api_key = os.getenv("GEMINI_API_KEY")
-    # Veo 3.1 渲染通常需要 v1alpha 接口
     client = genai.Client(api_key=api_key, http_options={'api_version': 'v1alpha'})
 
     videos_dir = ensure_videos_dir(job_dir)
@@ -115,7 +108,6 @@ def veo_generate_video(job_dir: Path, wf: dict, shot: dict) -> str:
     img_rel = shot.get("assets", {}).get("stylized_frame") or f"stylized_frames/{shot['shot_id']}.png"
     img_path = job_dir / img_rel
 
-    # 依赖检查
     if not img_path.exists():
         ai_stylize_frame(job_dir, wf, shot)
 
@@ -137,13 +129,39 @@ def veo_generate_video(job_dir: Path, wf: dict, shot: dict) -> str:
 
         while not operation.done:
             time.sleep(20)
-            operation = client.operations.get(operation)
+            operation = client.operations.get(operation.name)
             print(f"⏳ 视频渲染中...")
 
-        video_obj = operation.response.generated_videos[0].video
-        file_id = getattr(video_obj, 'name', None) or f"files/{video_obj.uri.split('/')[-1]}"
+        if operation.error:
+            raise RuntimeError(f"Veo 后端报错: {operation.error}")
+
+        resp = operation.response
+        if resp is None or not hasattr(resp, 'generated_videos') or not resp.generated_videos:
+            raise RuntimeError("Veo 任务完成但未返回视频数据。原因：可能触发了内容安全审核拦截。")
+
+        # 💡 核心修复：处理 video 字段可能是 str 也可能是 Object 的情况
+        video_output = resp.generated_videos[0].video
+        file_id = None
         
-        # 使用 v1beta 稳定端点下载
+        if isinstance(video_output, str):
+            # 如果直接返回的是字符串 ID
+            file_id = video_output
+        else:
+            # 如果返回的是对象，尝试多种取值方式
+            file_id = getattr(video_output, 'name', None)
+            if not file_id and hasattr(video_output, 'uri'):
+                # 兼容 URI 格式: https://.../files/xyz -> files/xyz
+                file_id = f"files/{video_output.uri.split('/')[-1]}"
+        
+        if not file_id:
+            raise RuntimeError(f"无法从响应中解析有效的 File ID: {video_output}")
+
+        # 确保 ID 格式正确 (必须包含 files/ 前缀)
+        if '/' not in file_id:
+            file_id = f"files/{file_id}"
+
+        print(f"✅ 生成成功，正在下载文件: {file_id}")
+        
         download_url = f"https://generativelanguage.googleapis.com/v1beta/{file_id}"
         query_params = {'alt': 'media', 'key': api_key}
         response = requests.get(download_url, params=query_params, stream=True)
@@ -154,9 +172,9 @@ def veo_generate_video(job_dir: Path, wf: dict, shot: dict) -> str:
             print(f"💾 视频生成成功: {out_path}")
             return f"videos/{out_path.name}"
         else:
-            raise RuntimeError(f"下载失败: {response.status_code}")
+            raise RuntimeError(f"下载失败: 状态码 {response.status_code}")
     except Exception as e:
-        print(f"❌ Veo 失败: {e}")
+        print(f"❌ Veo 失败: {str(e)}")
         raise e
 
 
@@ -201,6 +219,7 @@ def run_video_generate(job_dir: Path, wf: dict, target_shot: str | None = None) 
         except Exception as e:
             shot["status"]["video_generate"] = "FAILED"
             shot.setdefault("errors", {})["video_generate"] = str(e)
+            print(f"❌ Video FAILED: {sid} -> {e}")
         save_workflow(job_dir, wf)
 
 

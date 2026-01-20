@@ -24,6 +24,7 @@ app.add_middleware(
 )
 
 # 2. 初始化核心引擎
+# 创建全局 manager 实例
 manager = WorkflowManager() 
 agent = AgentEngine()
 
@@ -71,6 +72,7 @@ async def upload_video(file: UploadFile = File(...)):
 
 @app.get("/api/workflow")
 async def get_workflow(job_id: Optional[str] = None):
+    """获取最新全局状态"""
     target_id = job_id or manager.job_id
     if not target_id:
         jobs_dir = Path("jobs")
@@ -81,17 +83,21 @@ async def get_workflow(job_id: Optional[str] = None):
     if not target_id:
         return {"error": "No jobs found"}
         
+    # 动态同步状态
     manager.job_id = target_id
-    manager.job_dir = Path(__file__).parent / "jobs" / target_id
+    manager.job_dir = Path("jobs") / target_id
     return manager.load()
 
 @app.post("/api/agent/chat")
 async def agent_chat(req: ChatRequest):
+    """Agent 全局指挥"""
     if req.job_id: 
         manager.job_id = req.job_id
-        manager.job_dir = Path(__file__).parent / "jobs" / req.job_id
+        manager.job_dir = Path("jobs") / req.job_id
         
+    # 先同步磁盘数据到内存
     wf = manager.load()
+    
     example_desc = wf.get("shots")[0].get("description", "") if wf.get("shots") else ""
     summary = f"Job ID: {manager.job_id}\nGlobal Style: {wf.get('global', {}).get('style_prompt')}\nSample Desc: {example_desc}"
     
@@ -103,29 +109,32 @@ async def agent_chat(req: ChatRequest):
 
 @app.post("/api/shot/update")
 async def update_shot_params(req: ShotUpdateRequest):
+    """形态 3：手动微调单个分镜 - 修复保存逻辑"""
     if req.job_id:
         manager.job_id = req.job_id
-        manager.job_dir = Path(__file__).parent / "jobs" / req.job_id
+        manager.job_dir = Path("jobs") / req.job_id
+    
+    # 💡 核心修复：修改前必须强制加载该 job 的最新磁盘数据，防止版本覆盖
     manager.load()
+    
     action = {
         "op": "update_shot_params",
         "shot_id": req.shot_id,
         "description": req.description
     }
+    
     res = manager.apply_agent_action(action)
     return res
 
 @app.post("/api/run/{node_type}")
 async def run_task(node_type: str, background_tasks: BackgroundTasks, shot_id: Optional[str] = None, job_id: Optional[str] = None):
-    # 💡 统一同步 manager 的 Job 指向
     if job_id:
         manager.job_id = job_id
-        manager.job_dir = Path(__file__).parent / "jobs" / job_id
+        manager.job_dir = Path("jobs") / job_id
 
-    # 💡 核心新增：处理合并导出逻辑
+    # 处理合并导出逻辑
     if node_type == "merge":
-        print(f"🎬 收到合并请求，目标 Job: {manager.job_id}")
-        manager.load() # 确保状态最新
+        manager.load()
         try:
             result_file = manager.merge_videos()
             return {"status": "success", "file": result_file, "job_id": manager.job_id}
@@ -138,16 +147,20 @@ async def run_task(node_type: str, background_tasks: BackgroundTasks, shot_id: O
     background_tasks.add_task(manager.run_node, node_type, shot_id)
     return {"status": "started", "job_id": manager.job_id}
 
-# --- 核心：防缓存与资源映射 ---
+# --- 核心：防缓存中间件 ---
 @app.middleware("http")
 async def add_no_cache_header(request, call_next):
     response = await call_next(request)
     if request.url.path.startswith("/assets"):
         response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
     return response
 
+# 挂载静态资源目录
 app.mount("/assets", StaticFiles(directory="jobs"), name="assets")
 
 if __name__ == "__main__":
     import uvicorn
+    # 启动服务
     uvicorn.run(app, host="0.0.0.0", port=8000)
