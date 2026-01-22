@@ -9,8 +9,8 @@ FRAMES_DIR = PROJECT_DIR / "frames"
 OUT_DIR = PROJECT_DIR / "stylized_frames"
 OUT_DIR.mkdir(exist_ok=True)
 
-MODEL = "gemini-2.5-flash-image"  # Nano Banana（更快、更适合验证批量稳定性）
-# 如果你之后想用 Pro（更强、更贵）：MODEL = "gemini-3-pro-image-preview"
+MODEL = "gemini-2.5-flash-image"  # Nano Banana（验证批量稳定性）
+# 如果之后用 Pro：MODEL = "gemini-3-pro-image-preview"
 
 PROMPT = """
 You are given a storyboard reference frame from a viral short video.

@@ -40,9 +40,19 @@
             
             const [isEditing, setIsEditing] = useState(false);
 
-            const [transform, setTransform] = useState({ x: 80, y: 50, scale: 0.45 });
+            const [transform, setTransform] = useState({ x: 80, y: 50, scale: 0.35 });
             const isDragging = useRef(false);
             const lastMousePos = useRef({ x: 0, y: 0 });
+
+            // 🎯 自动适配视野：切换到 Workflow 视图时自动定位到能看到所有节点的位置
+            const fitToView = () => {
+                const totalShots = workflow?.shots?.length || 1;
+                // 根据分镜数量计算最佳缩放和位置
+                const optimalScale = Math.max(0.15, Math.min(0.4, 1.5 / totalShots));
+                const optimalX = 50;
+                const optimalY = 50;
+                setTransform({ x: optimalX, y: optimalY, scale: optimalScale });
+            };
 
             const fetchWorkflow = async (jobId) => {
                 if (isEditing) return;
@@ -162,8 +172,11 @@
                             <h1 className="text-xl font-bold tracking-tight bg-gradient-to-r from-blue-400 to-emerald-400 bg-clip-text text-transparent italic uppercase pr-4">ReTake Workstation</h1>
                             <div className="flex bg-slate-900 rounded-xl p-1 border border-white/10 shadow-inner">
                                 <button onClick={() => setViewMode('grid')} className={`px-5 py-1.5 rounded-lg text-xs font-bold transition ${viewMode === 'grid' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-500'}`}>STORYBOARD</button>
-                                <button onClick={() => setViewMode('graph')} className={`px-5 py-1.5 rounded-lg text-xs font-bold transition ${viewMode === 'graph' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-500'}`}>WORKFLOW CANVAS</button>
+                                <button onClick={() => { setViewMode('graph'); setTimeout(fitToView, 100); }} className={`px-5 py-1.5 rounded-lg text-xs font-bold transition ${viewMode === 'graph' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-500'}`}>WORKFLOW CANVAS</button>
                             </div>
+                            {viewMode === 'graph' && (
+                                <button onClick={fitToView} className="ml-2 px-3 py-1.5 rounded-lg text-xs font-bold bg-slate-800 text-slate-400 hover:text-white border border-white/10 transition">FIT VIEW</button>
+                            )}
                         </div>
                         <div className="flex gap-4">
                             <button onClick={() => { setWorkflow(null); setCurrentJobId(null); }} className="text-[10px] font-black border border-white/10 px-4 py-2 rounded-xl text-slate-500 hover:text-white uppercase tracking-widest">+ New Project</button>

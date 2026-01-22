@@ -97,18 +97,164 @@ class WorkflowManager:
             model="gemini-2.0-flash",
             contents=[DIRECTOR_METAPROMPT, video_file],
         )
-        return extract_json_array(response.text)
+        raw_shots = extract_json_array(response.text)
+
+        # 语义化合并：减少过度分镜
+        merged_shots = self._merge_semantic_shots(raw_shots, client)
+        return merged_shots
+
+    def _merge_semantic_shots(self, shots: List[Dict], client) -> List[Dict]:
+        """
+        语义化合并：将连续的、背景/角度/主体相似的分镜合并为一个完整分镜。
+        使用 AI 判断哪些连续分镜应该合并。
+        """
+        if len(shots) <= 1:
+            return shots
+
+        # 构建合并判断提示
+        shots_summary = []
+        for i, s in enumerate(shots):
+            shots_summary.append({
+                "index": i,
+                "start_time": s.get("start_time"),
+                "end_time": s.get("end_time"),
+                "description": s.get("frame_description") or s.get("content_analysis"),
+                "shot_type": s.get("shot_type"),
+                "camera_angle": s.get("camera_angle"),
+                "camera_movement": s.get("camera_movement")
+            })
+
+        merge_prompt = f"""你是一位专业的影视剪辑师。请分析以下分镜列表，判断哪些**连续的**分镜应该合并。
+
+合并条件（必须同时满足）：
+1. 分镜是**连续的**（index 相邻）
+2. 场景/背景没有显著变化
+3. 主体/角色没有切换
+4. 机位角度没有明显变化
+5. 属于同一个完整动作或事件
+
+分镜列表：
+{json.dumps(shots_summary, ensure_ascii=False, indent=2)}
+
+请输出需要合并的分镜组，格式为纯JSON数组，每个元素是一个需要合并的index数组。
+例如：[[0,1,2], [5,6]] 表示将0-1-2合并为一个分镜，5-6合并为一个分镜。
+如果没有需要合并的，输出空数组 []。
+仅输出纯JSON，不要任何解释。"""
+
+        try:
+            merge_response = client.models.generate_content(
+                model="gemini-2.0-flash",
+                contents=[merge_prompt],
+            )
+            merge_text = merge_response.text.strip()
+
+            # 提取JSON数组
+            if merge_text.startswith("["):
+                merge_groups = json.loads(merge_text)
+            else:
+                l = merge_text.find("[")
+                r = merge_text.rfind("]")
+                if l != -1 and r != -1:
+                    merge_groups = json.loads(merge_text[l:r+1])
+                else:
+                    merge_groups = []
+
+            if not merge_groups:
+                print(f"📊 语义分析：无需合并，保留 {len(shots)} 个分镜")
+                return shots
+
+            # 执行合并
+            merged_indices = set()
+            for group in merge_groups:
+                if isinstance(group, list) and len(group) > 1:
+                    merged_indices.update(group[1:])  # 除了第一个，其余标记为被合并
+
+            result = []
+            i = 0
+            new_shot_num = 1
+            while i < len(shots):
+                shot = shots[i].copy()
+
+                # 检查是否是合并组的起始
+                merge_group = None
+                for group in merge_groups:
+                    if isinstance(group, list) and len(group) > 1 and group[0] == i:
+                        merge_group = group
+                        break
+
+                if merge_group:
+                    # 合并该组的所有分镜
+                    last_idx = merge_group[-1]
+                    shot["end_time"] = shots[last_idx].get("end_time")
+
+                    # 合并描述
+                    descriptions = []
+                    for idx in merge_group:
+                        if idx < len(shots):
+                            desc = shots[idx].get("frame_description") or shots[idx].get("content_analysis")
+                            if desc and desc not in descriptions:
+                                descriptions.append(desc)
+                    shot["frame_description"] = " → ".join(descriptions[:3])  # 最多保留3段描述
+                    shot["content_analysis"] = shot["frame_description"]
+
+                    print(f"🔗 合并分镜 {[s+1 for s in merge_group]} -> shot_{new_shot_num:02d}")
+                    i = last_idx + 1
+                else:
+                    if i not in merged_indices:
+                        i += 1
+                    else:
+                        i += 1
+                        continue
+
+                shot["shot_number"] = new_shot_num
+                result.append(shot)
+                new_shot_num += 1
+
+            print(f"📊 语义合并完成：{len(shots)} 个分镜 -> {len(result)} 个分镜")
+            return result
+
+        except Exception as e:
+            print(f"⚠️ 语义合并分析失败 ({e})，保留原始分镜")
+            return shots
 
     def _run_ffmpeg_extraction(self, video_path: Path, storyboard: List):
+        """
+        毫秒级精准提取：
+        - 关键帧提取：从分镜中点提取，确保画面与描述一致
+        - 视频片段：使用精准切割模式
+        """
         ffmpeg_path = "/opt/homebrew/bin/ffmpeg"
         for s in storyboard:
             ts = to_seconds(s.get("start_time"))
-            duration = to_seconds(s.get("end_time")) - ts
+            end_ts = to_seconds(s.get("end_time"))
+            duration = end_ts - ts
             sid = f"shot_{int(s['shot_number']):02d}"
+
+            # 🎯 关键帧提取：从分镜的**中点**提取，而非起始点
+            # 原因：起始点可能是转场瞬间，中点才是该分镜的代表性画面
+            mid_ts = ts + (duration / 2.0)
             img_out = self.job_dir / "frames" / f"{sid}.png"
-            subprocess.run([ffmpeg_path, "-y", "-ss", str(ts), "-i", str(video_path), "-frames:v", "1", "-q:v", "2", str(img_out)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.run([
+                ffmpeg_path, "-y",
+                "-i", str(video_path),
+                "-ss", str(mid_ts),       # 从中点提取，确保画面与描述一致
+                "-frames:v", "1",
+                "-q:v", "2",
+                str(img_out)
+            ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+            # 🎯 精准视频片段切割
             video_segment_out = self.job_dir / "source_segments" / f"{sid}.mp4"
-            subprocess.run([ffmpeg_path, "-y", "-ss", str(ts), "-t", str(duration), "-i", str(video_path), "-c", "copy", str(video_segment_out)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.run([
+                ffmpeg_path, "-y",
+                "-i", str(video_path),
+                "-ss", str(ts),           # 视频片段从起始点开始
+                "-t", str(duration),
+                "-c:v", "libx264",        # 重新编码以确保精准切割
+                "-c:a", "aac",
+                "-avoid_negative_ts", "make_zero",
+                str(video_segment_out)
+            ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
     def load(self):
         """加载状态并对齐物理文件状态"""
@@ -219,7 +365,33 @@ class WorkflowManager:
                         s["assets"]["stylized_frame"] = None
                         total_affected += 1
                         break
-                        
+
+            elif op == "enhance_shot_description":
+                # 📐 空间感知 + 🎬 风格强化：增强分镜描述
+                sid = act.get("shot_id")
+                spatial_info = act.get("spatial_info", "")
+                style_boost = act.get("style_boost", "")
+                for s in self.workflow.get("shots", []):
+                    if s["shot_id"] == sid:
+                        original_desc = s.get("description", "")
+                        enhanced_parts = [original_desc]
+                        if spatial_info:
+                            enhanced_parts.append(f"[Spatial: {spatial_info}]")
+                        if style_boost:
+                            enhanced_parts.append(f"[Style: {style_boost}]")
+                        s["description"] = " ".join(enhanced_parts)
+                        s["status"]["stylize"] = "NOT_STARTED"
+                        s["status"]["video_generate"] = "NOT_STARTED"
+                        v_path = self.job_dir / "videos" / f"{sid}.mp4"
+                        if v_path.exists(): os.remove(v_path)
+                        i_path = self.job_dir / "stylized_frames" / f"{sid}.png"
+                        if i_path.exists(): os.remove(i_path)
+                        s["assets"]["video"] = None
+                        s["assets"]["stylized_frame"] = None
+                        total_affected += 1
+                        print(f"📐 增强分镜描述: {sid} -> {s['description'][:80]}...")
+                        break
+
         if total_affected > 0: self.save()
         return {"status": "success", "affected_shots": total_affected}
 

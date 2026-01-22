@@ -35,7 +35,14 @@ def ai_stylize_frame(job_dir: Path, wf: dict, shot: dict) -> str:
 
     global_style = wf.get("global", {}).get("style_prompt", "Cinematic")
     description = shot.get("description", "")
-    prompt = f"A professional stylized storyboard frame. Subject: {description}. Art Style: {global_style}. High resolution, 16:9 cinematic framing."
+
+    # 🎬 风格强控：使用强力变换指令，确保 AI 大胆改变风格
+    prompt = f"""TOTAL VISUAL TRANSFORMATION REQUIRED.
+Hyper-stylized storyboard frame with COMPLETE aesthetic overhaul.
+Subject: {description}.
+Art Style: {global_style} - Apply this style AGGRESSIVELY and BOLDLY.
+Requirements: High resolution, 16:9 cinematic framing, dramatic lighting, professional composition.
+IMPORTANT: Do NOT preserve original appearance. FULLY transform into the specified art style."""
 
     print(f"️  AI 正在尝试生成定妆图: {shot['shot_id']}")
 
@@ -115,89 +122,125 @@ def veo_generate_video(job_dir: Path, wf: dict, shot: dict) -> str:
     print(f"🚀 [Veo 3.1] 正在渲染分镜视频: {shot['shot_id']}")
 
     image_bytes = img_path.read_bytes()
-    prompt = f"Cinematic video, {shot.get('description', '')}. Style: {wf.get('global', {}).get('style_prompt', '')}."
+    description = shot.get('description', '')
+    style = wf.get('global', {}).get('style_prompt', '')
 
-    try:
-        # image 作为独立参数传递，不在 config 内
-        operation = client.models.generate_videos(
-            model="veo-3.1-generate-preview",
-            prompt=prompt,
-            image=types.Image(
-                image_bytes=image_bytes,
-                mime_type="image/png"
-            ),
-            config=types.GenerateVideosConfig(
-                aspect_ratio="16:9"
-            )
-        )
+    # 🎬 风格强控：确保视频生成保持一致性和风格化
+    prompt = f"""Cinematic video with CONSISTENT visual style throughout.
+Scene: {description}.
+Art Style: {style} - Maintain this style CONSISTENTLY across all frames.
+Requirements: Smooth motion, professional cinematography, dramatic lighting.
+CRITICAL: Keep subject position and composition STABLE. No sudden flips or mirror effects."""
 
-        print(f"⏳ 视频正在云端渲染 (Operation ID: {operation.name})")
+    # 🔄 自愈式重试逻辑：遇到 429 错误时自动等待并重试
+    max_retries = 3
+    retry_wait_seconds = 60
 
-        poll_count = 0
-        max_polls = 60  # 20 minutes max
-        while not operation.done:
-            poll_count += 1
-            if poll_count > max_polls:
-                raise RuntimeError(f"Veo 轮询超时: 已等待超过 20 分钟")
-            print(f"⏳ 视频渲染中... (轮询 {poll_count})")
-            time.sleep(20)
-            operation = client.operations.get(operation)
-
-        # 检查错误
-        if operation.error:
-            raise RuntimeError(f"Veo 后端报错: {operation.error}")
-
-        # 检查结果
-        if not operation.result or not operation.result.generated_videos:
-            raise RuntimeError("Veo 任务完成但未返回视频数据。原因：可能触发了内容安全审核拦截。")
-
-        generated_video = operation.result.generated_videos[0]
-
-        # 优先使用 SDK 原生 save 方法
+    for attempt in range(max_retries):
         try:
-            generated_video.video.save(str(out_path))
-            print(f"💾 视频生成成功 (SDK save): {out_path}")
-            return f"videos/{out_path.name}"
-        except Exception as save_err:
-            print(f"⚠️ SDK save 失败 ({save_err})，尝试手动下载...")
+            # image 作为独立参数传递，不在 config 内
+            operation = client.models.generate_videos(
+                model="veo-3.1-generate-preview",
+                prompt=prompt,
+                image=types.Image(
+                    image_bytes=image_bytes,
+                    mime_type="image/png"
+                ),
+                config=types.GenerateVideosConfig(
+                    aspect_ratio="16:9"
+                )
+            )
 
-        # 备用：手动下载
-        file_id = None
-        video_obj = generated_video.video if hasattr(generated_video, 'video') else generated_video
+            print(f"⏳ 视频正在云端渲染 (Operation ID: {operation.name})")
 
-        if hasattr(video_obj, 'name') and video_obj.name:
-            file_id = video_obj.name if "/" in video_obj.name else f"files/{video_obj.name}"
-        elif hasattr(video_obj, 'uri') and video_obj.uri:
-            file_id = f"files/{video_obj.uri.split('/')[-1]}"
+            poll_count = 0
+            max_polls = 60  # 20 minutes max
+            while not operation.done:
+                poll_count += 1
+                if poll_count > max_polls:
+                    raise RuntimeError(f"Veo 轮询超时: 已等待超过 20 分钟")
+                print(f"⏳ 视频渲染中... (轮询 {poll_count})")
+                time.sleep(20)
+                operation = client.operations.get(operation)
 
-        if not file_id:
-            raise RuntimeError(f"无法从响应中解析有效的 File ID: {type(video_obj).__name__}")
+            # 检查错误
+            if operation.error:
+                raise RuntimeError(f"Veo 后端报错: {operation.error}")
 
-        print(f"✅ 生成成功，正在下载文件: {file_id}")
+            # 检查结果
+            if not operation.result or not operation.result.generated_videos:
+                raise RuntimeError("Veo 任务完成但未返回视频数据。原因：可能触发了内容安全审核拦截。")
 
-        download_url = f"https://generativelanguage.googleapis.com/v1beta/{file_id}"
-        query_params = {'alt': 'media', 'key': api_key}
-        response = requests.get(download_url, params=query_params, stream=True)
+            generated_video = operation.result.generated_videos[0]
 
-        if response.status_code == 200:
-            with open(out_path, 'wb') as f:
-                for chunk in response.iter_content(chunk_size=1024*1024): f.write(chunk)
-            print(f"💾 视频生成成功 (手动下载): {out_path}")
-            return f"videos/{out_path.name}"
-        else:
-            raise RuntimeError(f"下载失败: 状态码 {response.status_code}")
-    except Exception as e:
-        print(f"❌ Veo 失败: {str(e)}")
-        raise e
+            # 优先使用 SDK 原生 save 方法
+            try:
+                generated_video.video.save(str(out_path))
+                print(f"💾 视频生成成功 (SDK save): {out_path}")
+                return f"videos/{out_path.name}"
+            except Exception as save_err:
+                print(f"⚠️ SDK save 失败 ({save_err})，尝试手动下载...")
+
+            # 备用：手动下载
+            file_id = None
+            video_obj = generated_video.video if hasattr(generated_video, 'video') else generated_video
+
+            if hasattr(video_obj, 'name') and video_obj.name:
+                file_id = video_obj.name if "/" in video_obj.name else f"files/{video_obj.name}"
+            elif hasattr(video_obj, 'uri') and video_obj.uri:
+                file_id = f"files/{video_obj.uri.split('/')[-1]}"
+
+            if not file_id:
+                raise RuntimeError(f"无法从响应中解析有效的 File ID: {type(video_obj).__name__}")
+
+            print(f"✅ 生成成功，正在下载文件: {file_id}")
+
+            download_url = f"https://generativelanguage.googleapis.com/v1beta/{file_id}"
+            query_params = {'alt': 'media', 'key': api_key}
+            response = requests.get(download_url, params=query_params, stream=True)
+
+            if response.status_code == 200:
+                with open(out_path, 'wb') as f:
+                    for chunk in response.iter_content(chunk_size=1024*1024): f.write(chunk)
+                print(f"💾 视频生成成功 (手动下载): {out_path}")
+                return f"videos/{out_path.name}"
+            else:
+                raise RuntimeError(f"下载失败: 状态码 {response.status_code}")
+
+        except Exception as e:
+            error_str = str(e).lower()
+            is_rate_limit = "429" in error_str or "rate" in error_str or "quota" in error_str or "resource_exhausted" in error_str
+
+            if is_rate_limit and attempt < max_retries - 1:
+                wait_time = retry_wait_seconds * (attempt + 1)  # 递增等待时间
+                print(f"⚠️ 触发 RPM 限制 (429)，等待 {wait_time} 秒后重试 ({attempt + 1}/{max_retries})...")
+                time.sleep(wait_time)
+                continue
+            else:
+                print(f"❌ Veo 失败: {str(e)}")
+                raise e
+
+    # 如果所有重试都失败
+    raise RuntimeError(f"Veo 生成失败：已重试 {max_retries} 次")
 
 
 def run_stylize(job_dir: Path, wf: dict, target_shot: str | None = None) -> None:
+    shots_to_process = []
     for shot in wf.get("shots", []):
         sid = shot.get("shot_id")
         if target_shot and sid != target_shot: continue
         status = shot.get("status", {}).get("stylize", "NOT_STARTED")
         if not target_shot and status not in ("NOT_STARTED", "FAILED"): continue
-        
+        shots_to_process.append(shot)
+
+    for idx, shot in enumerate(shots_to_process):
+        sid = shot.get("shot_id")
+
+        # 🚦 RPM 限流：批量执行时，每个分镜之间休眠 35 秒
+        if idx > 0 and target_shot is None:
+            print(f"⏳ RPM 限流：等待 35 秒后处理下一个分镜...")
+            time.sleep(35)
+
         shot.setdefault("status", {})["stylize"] = "RUNNING"
         save_workflow(job_dir, wf)
         try:
@@ -212,12 +255,22 @@ def run_stylize(job_dir: Path, wf: dict, target_shot: str | None = None) -> None
 
 
 def run_video_generate(job_dir: Path, wf: dict, target_shot: str | None = None) -> None:
+    shots_to_process = []
     for shot in wf.get("shots", []):
         sid = shot.get("shot_id")
         if target_shot and sid != target_shot: continue
         status = shot.get("status", {}).get("video_generate", "NOT_STARTED")
         if not target_shot and status not in ("NOT_STARTED", "FAILED"): continue
-        
+        shots_to_process.append(shot)
+
+    for idx, shot in enumerate(shots_to_process):
+        sid = shot.get("shot_id")
+
+        # 🚦 RPM 限流：批量执行时，每个分镜之间休眠 35 秒
+        if idx > 0 and target_shot is None:
+            print(f"⏳ RPM 限流：等待 35 秒后处理下一个分镜...")
+            time.sleep(35)
+
         shot.setdefault("status", {})["video_generate"] = "RUNNING"
         save_workflow(job_dir, wf)
         try:

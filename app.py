@@ -98,8 +98,14 @@ async def agent_chat(req: ChatRequest):
     # 先同步磁盘数据到内存
     wf = manager.load()
     
-    example_desc = wf.get("shots")[0].get("description", "") if wf.get("shots") else ""
-    summary = f"Job ID: {manager.job_id}\nGlobal Style: {wf.get('global', {}).get('style_prompt')}\nSample Desc: {example_desc}"
+    # 💡 必须包含所有分镜描述，Agent 才能找到所有主体进行替换
+    all_descriptions = []
+    for i, shot in enumerate(wf.get("shots", [])):
+        desc = shot.get("description", "")
+        if desc:
+            all_descriptions.append(f"Shot {i+1}: {desc}")
+    descriptions_text = "\n".join(all_descriptions) if all_descriptions else "No shots"
+    summary = f"Job ID: {manager.job_id}\nGlobal Style: {wf.get('global', {}).get('style_prompt')}\n\n[All Shot Descriptions]\n{descriptions_text}"
     
     action = agent.get_action_from_text(req.message, summary)
     if isinstance(action, list) or (isinstance(action, dict) and action.get("op") != "error"):
