@@ -2109,7 +2109,7 @@ class WorkflowManager:
                                                                 <img src={getAssetUrl(shot.assets.first_frame)} className="w-full h-full object-cover" />
                                                                 <div className="absolute top-3 left-3 bg-red-500 text-[8px] px-2 py-0.5 font-black rounded uppercase">SOURCE IMAGE</div>
                                                             </div>
-                                                            <p className="text-[10px] text-center text-slate-500 uppercase tracking-widest font-bold">原始分镜图</p>
+                                                            <p className="text-[10px] text-center text-slate-500 uppercase tracking-widest font-bold">SOURCE FRAME</p>
                                                         </div>
                                                         <div className="space-y-3">
                                                             <div className="relative aspect-video rounded-2xl overflow-hidden border border-purple-500/30 bg-slate-900 shadow-[0_0_20px_rgba(168,85,247,0.1)]">
@@ -2117,14 +2117,14 @@ class WorkflowManager:
                                                                 <div className="absolute top-3 left-3 bg-purple-600 text-[8px] px-2 py-0.5 font-black rounded uppercase text-white">STYLIZED DNA</div>
                                                                 <button onClick={() => runTask('stylize', shot.shot_id)} className="absolute bottom-3 right-3 glass p-2 rounded-lg hover:bg-white/10 transition-colors"><svg className="w-3 h-3 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" strokeWidth="3"/></svg></button>
                                                             </div>
-                                                            <p className="text-[10px] text-center text-purple-400 uppercase tracking-widest font-bold">分镜定妆图</p>
+                                                            <p className="text-[10px] text-center text-purple-400 uppercase tracking-widest font-bold">STYLE FRAME</p>
                                                         </div>
                                                         <div className="space-y-3">
                                                             <div className={`relative aspect-video rounded-2xl overflow-hidden border ${isSuccess ? 'border-emerald-500/40 shadow-xl' : 'border-blue-500/20 bg-slate-900'}`}>
                                                                 {isSuccess ? <video src={`${getAssetUrl(shot.assets.video)}?t=${Date.now()}`} className="w-full h-full object-cover" controls autoPlay muted loop /> : <div className="h-full flex items-center justify-center font-mono text-[9px] text-blue-400 animate-pulse uppercase tracking-widest">{shot.status?.video_generate}</div>}
                                                                 <div className="absolute top-3 left-3 bg-blue-500 text-[8px] px-2 py-0.5 font-black rounded shadow-lg uppercase text-white">AI OUTPUT</div>
                                                             </div>
-                                                            <p className="text-[10px] text-center text-blue-400 uppercase tracking-widest font-bold">最终生成视频</p>
+                                                            <p className="text-[10px] text-center text-blue-400 uppercase tracking-widest font-bold">FINAL TAKE</p>
                                                         </div>
                                                     </div>
                                                     <div className="mt-8 p-5 bg-slate-900/50 rounded-2xl border border-white/5 relative">

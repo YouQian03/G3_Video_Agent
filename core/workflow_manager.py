@@ -153,11 +153,11 @@ class WorkflowManager:
         }
         
         if failed_count > 0:
-            self.workflow["merge_info"]["message"] = f"⚠️ 有 {failed_count} 个分镜失败，无法拼合"
+            self.workflow["merge_info"]["message"] = f"⚠️ {failed_count} shots failed and cannot be assembled."
         elif pending_count > 0:
-            self.workflow["merge_info"]["message"] = "⏳ 正在等待分镜生成完成..."
+            self.workflow["merge_info"]["message"] = "⏳ Waiting for the shot list to be generated..."
         elif len(shots) > 0:
-            self.workflow["merge_info"]["message"] = "✅ 分镜已全部就绪，可以拼合成片"
+            self.workflow["merge_info"]["message"] = "✅ All shots are ready and can be assembled into the final film."
         
         if updated: self.save()
         return self.workflow
