@@ -27,13 +27,13 @@
       "assets": {
         "first_frame": "frames/shot_01.png",
         "stylized_frame": "stylized_frames/shot_01.png",
-        "video": null
+        "video": "videos/shot_01.mp4"
       },
       "status": {
         "analyze": "SUCCESS",
         "extract_frames": "SUCCESS",
-        "stylize": "NOT_STARTED",
-        "video_generate": "NOT_STARTED"
+        "stylize": "SUCCESS",
+        "video_generate": "SUCCESS"
       },
       "errors": {
         "video_generate": "RuntimeError('下载失败。状态码: 400, 详情: {\\n  \"error\": {\\n    \"code\": 400,\\n    \"message\": \"Invalid value \\\\\"media?key=AIzaSyBgDuk23TmU4r1Btgs8sjhhEiywhOn9NKg\\\\\" for query parameter \\'alt\\'\",\\n    \"status\": \"INVALID_ARGUMENT\"\\n  }\\n}\\n')",

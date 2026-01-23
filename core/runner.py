@@ -375,11 +375,22 @@ high motion quality, cinematic, professional cinematography"""
             if not file_id:
                 raise RuntimeError(f"无法从响应中解析有效的 File ID: {type(video_obj).__name__}")
 
-            print(f"✅ 生成成功，正在下载文件: {file_id}")
+            # 防御性修复：file_id 可能自带 ?alt=media 或 ?key=...
+            clean_file_id = file_id.split("?", 1)[0]
 
-            download_url = f"https://generativelanguage.googleapis.com/v1beta/{file_id}"
-            query_params = {'alt': 'media', 'key': api_key}
-            response = requests.get(download_url, params=query_params, stream=True)
+            print(f"✅ 生成成功，正在下载文件: {clean_file_id}")
+
+            download_url = f"https://generativelanguage.googleapis.com/v1beta/{clean_file_id}"
+            query_params = {
+                "alt": "media",
+                "key": api_key,
+            }
+
+            response = requests.get(
+                download_url,
+                params=query_params,
+                stream=True,
+            )
 
             if response.status_code == 200:
                 with open(out_path, 'wb') as f:
