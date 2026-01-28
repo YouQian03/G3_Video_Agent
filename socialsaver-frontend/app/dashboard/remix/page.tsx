@@ -403,6 +403,15 @@ export default function RemixPage() {
   const [currentJobId, setCurrentJobId] = useState<string | null>(null)
   const [apiError, setApiError] = useState<string | null>(null)
   const [realStoryboard, setRealStoryboard] = useState<SocialSaverStoryboard | null>(null)
+
+  // 🎬 Video Generation State
+  const [generationProgress, setGenerationProgress] = useState<{
+    stage: "idle" | "stylizing" | "generating" | "merging" | "complete" | "error"
+    currentShot: number
+    totalShots: number
+    message: string
+  }>({ stage: "idle", currentShot: 0, totalShots: 0, message: "" })
+  const [generatedVideoUrl, setGeneratedVideoUrl] = useState<string | null>(null)
   
   // Redirect to batch mode if mode=batch
   useEffect(() => {
@@ -657,16 +666,152 @@ export default function RemixPage() {
   }
 
   const handleConfirmStoryboard = async () => {
+    if (!currentJobId) {
+      setApiError("No job ID found. Please upload a video first.")
+      return
+    }
+
     setIsGeneratingVideo(true)
     setStep("video")
     setDisplayStep("video")
-    
-    // Simulate video generation
-    await new Promise((resolve) => setTimeout(resolve, 3000))
-    
-    setIsGeneratingVideo(false)
-    setVideoGenerated(true)
-    setCompletedSteps(["analysis", "script", "views", "storyboard", "video"])
+    setApiError(null)
+
+    try {
+      // Get the shots from the storyboard
+      const shots = realStoryboard?.storyboard || analysisResult?.storyboard || []
+      const totalShots = shots.length
+
+      // 🎨 Stage 1: Stylize all shots
+      setGenerationProgress({
+        stage: "stylizing",
+        currentShot: 0,
+        totalShots,
+        message: "Generating style frames with AI..."
+      })
+
+      for (let i = 0; i < totalShots; i++) {
+        const shotId = `shot_${String(i + 1).padStart(2, "0")}`
+        setGenerationProgress({
+          stage: "stylizing",
+          currentShot: i + 1,
+          totalShots,
+          message: `Stylizing shot ${i + 1} of ${totalShots}...`
+        })
+
+        try {
+          await runTask("stylize", currentJobId, shotId)
+        } catch (e) {
+          console.warn(`Stylize shot ${shotId} failed, continuing...`, e)
+        }
+      }
+
+      // 🎬 Stage 2: Generate videos for all shots (async - need to poll)
+      setGenerationProgress({
+        stage: "generating",
+        currentShot: 0,
+        totalShots,
+        message: "Starting video generation..."
+      })
+
+      // Trigger video generation for all shots
+      for (let i = 0; i < totalShots; i++) {
+        const shotId = `shot_${String(i + 1).padStart(2, "0")}`
+        try {
+          await runTask("video_generate", currentJobId, shotId)
+        } catch (e) {
+          console.warn(`Video generate trigger for ${shotId} failed`, e)
+        }
+      }
+
+      // Poll for video generation completion
+      let pollAttempts = 0
+      const maxPollAttempts = 120 // 10 minutes max (120 * 5s)
+      let finalVideoCount = 0
+
+      while (pollAttempts < maxPollAttempts) {
+        const status = await getJobStatus(currentJobId)
+        finalVideoCount = status.videoGeneratedCount
+
+        setGenerationProgress({
+          stage: "generating",
+          currentShot: status.videoGeneratedCount,
+          totalShots: status.totalShots,
+          message: `Generating videos: ${status.videoGeneratedCount} of ${status.totalShots} complete...`
+        })
+
+        // Check if all videos are generated
+        if (status.videoGeneratedCount >= status.totalShots) {
+          break
+        }
+
+        // Check if there are still running tasks
+        if (status.runningCount === 0 && status.videoGeneratedCount < status.totalShots) {
+          // No running tasks but not all videos done - some might have failed (e.g., quota exceeded)
+          console.warn(`Video generation completed with ${status.videoGeneratedCount}/${status.totalShots} videos (some may have failed due to API limits)`)
+          break
+        }
+
+        await new Promise(resolve => setTimeout(resolve, 5000)) // Poll every 5 seconds
+        pollAttempts++
+      }
+
+      // Check if we have any videos to merge
+      if (finalVideoCount === 0) {
+        throw new Error("No videos were generated. Please check your API quota and try again.")
+      }
+
+      const hasPartialFailure = finalVideoCount < totalShots
+
+      // 🔗 Stage 3: Merge all videos
+      setGenerationProgress({
+        stage: "merging",
+        currentShot: finalVideoCount,
+        totalShots,
+        message: hasPartialFailure
+          ? `Merging ${finalVideoCount} of ${totalShots} shots (some failed due to API limits)...`
+          : "Merging all shots into final video..."
+      })
+
+      const mergeResult = await runTask("merge", currentJobId)
+
+      // Set the final video URL
+      if (mergeResult.file) {
+        const videoUrl = getAssetUrl(currentJobId, mergeResult.file)
+        setGeneratedVideoUrl(videoUrl)
+      }
+
+      setGenerationProgress({
+        stage: "complete",
+        currentShot: finalVideoCount,
+        totalShots,
+        message: hasPartialFailure
+          ? `Video created with ${finalVideoCount} of ${totalShots} shots (some failed due to API limits)`
+          : "Video generation complete!"
+      })
+
+      setIsGeneratingVideo(false)
+      setVideoGenerated(true)
+      setCompletedSteps(["analysis", "script", "views", "storyboard", "video"])
+
+    } catch (error) {
+      console.error("Video generation error:", error)
+      const errorMessage = error instanceof Error ? error.message : "Video generation failed"
+      const isQuotaError = errorMessage.includes("quota") || errorMessage.includes("No videos were generated")
+
+      setGenerationProgress({
+        stage: "error",
+        currentShot: 0,
+        totalShots: 0,
+        message: isQuotaError
+          ? "API quota exceeded - Google Veo rate limit reached"
+          : errorMessage
+      })
+      setApiError(isQuotaError
+        ? "Video generation failed due to API quota limits. Please wait a few minutes and try again, or check your Google Cloud billing settings."
+        : errorMessage
+      )
+      setIsGeneratingVideo(false)
+    }
   }
 
   const handleStartOver = () => {
@@ -683,6 +828,12 @@ export default function RemixPage() {
     setVideoGenerated(false)
     setCharacters([])
     setScenes([])
+    // Reset API state
+    setCurrentJobId(null)
+    setApiError(null)
+    setRealStoryboard(null)
+    setGenerationProgress({ stage: "idle", currentShot: 0, totalShots: 0, message: "" })
+    setGeneratedVideoUrl(null)
   }
 
   const showStepIndicator = step !== "upload"
@@ -960,11 +1111,81 @@ export default function RemixPage() {
                 <CardContent className="flex flex-col items-center justify-center py-16">
                   <Loader2 className="w-12 h-12 text-accent animate-spin mb-4" />
                   <h3 className="text-lg font-semibold text-foreground mb-2">
-                    Generating Remix Video
+                    {generationProgress.stage === "stylizing" && "Generating Style Frames"}
+                    {generationProgress.stage === "generating" && "Generating Video Clips"}
+                    {generationProgress.stage === "merging" && "Merging Final Video"}
+                    {generationProgress.stage === "idle" && "Preparing..."}
                   </h3>
-                  <p className="text-muted-foreground text-center max-w-md">
-                    Creating your final remix video based on the confirmed storyboard...
+                  <p className="text-muted-foreground text-center max-w-md mb-4">
+                    {generationProgress.message}
                   </p>
+                  {generationProgress.totalShots > 0 && (
+                    <div className="w-full max-w-md">
+                      <div className="flex justify-between text-sm text-muted-foreground mb-2">
+                        <span>Progress</span>
+                        <span>{generationProgress.currentShot} / {generationProgress.totalShots} shots</span>
+                      </div>
+                      <div className="w-full bg-secondary rounded-full h-2">
+                        <div
+                          className="bg-accent h-2 rounded-full transition-all duration-300"
+                          style={{
+                            width: `${(generationProgress.currentShot / generationProgress.totalShots) * 100}%`
+                          }}
+                        />
+                      </div>
+                      <p className="text-xs text-muted-foreground mt-2 text-center">
+                        {generationProgress.stage === "stylizing" && "Using Google Imagen to create style frames..."}
+                        {generationProgress.stage === "generating" && "Using Google Veo to generate video clips..."}
+                        {generationProgress.stage === "merging" && "Combining all clips into final video..."}
+                      </p>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Step: Video Generation Failed */}
+            {step === "video" && !isGeneratingVideo && !videoGenerated && generationProgress.stage === "error" && (
+              <Card className="bg-card border-red-500/30 border-2">
+                <CardContent className="flex flex-col items-center justify-center py-16">
+                  <div className="w-16 h-16 rounded-full bg-red-500/20 flex items-center justify-center mb-4">
+                    <Video className="w-8 h-8 text-red-500" />
+                  </div>
+                  <h3 className="text-lg font-semibold text-foreground mb-2">
+                    Video Generation Failed
+                  </h3>
+                  <p className="text-muted-foreground text-center max-w-md mb-2">
+                    {generationProgress.message}
+                  </p>
+                  {apiError && (
+                    <p className="text-red-500 text-sm text-center max-w-md mb-6">
+                      {apiError}
+                    </p>
+                  )}
+                  <div className="flex gap-3">
+                    <Button
+                      onClick={() => {
+                        setGenerationProgress({ stage: "idle", currentShot: 0, totalShots: 0, message: "" })
+                        setApiError(null)
+                        handleConfirmStoryboard()
+                      }}
+                      className="bg-accent text-accent-foreground hover:bg-accent/90"
+                    >
+                      Retry Generation
+                    </Button>
+                    <Button
+                      variant="outline"
+                      onClick={() => {
+                        setStep("storyboard")
+                        setDisplayStep("storyboard")
+                        setGenerationProgress({ stage: "idle", currentShot: 0, totalShots: 0, message: "" })
+                        setApiError(null)
+                      }}
+                      className="border-border text-foreground hover:bg-secondary bg-transparent"
+                    >
+                      Back to Storyboard
+                    </Button>
+                  </div>
                 </CardContent>
               </Card>
             )}
@@ -976,24 +1197,35 @@ export default function RemixPage() {
                   <CardContent className="p-0">
                     {/* Video Preview Area */}
                     <div className="relative aspect-video bg-black">
-                      {/* 
-                        Real video player - replace the src with actual generated video URL
-                        Example: src={generatedVideoUrl}
-                      */}
-                      <video
-                        className="w-full h-full object-contain"
-                        controls
-                        poster="/images/video-poster-placeholder.jpg"
-                        preload="metadata"
-                      >
-                        {/* Replace with actual generated video URL */}
-                        <source src="https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4" type="video/mp4" />
-                        Your browser does not support the video tag.
-                      </video>
+                      {generatedVideoUrl ? (
+                        <video
+                          className="w-full h-full object-contain"
+                          controls
+                          preload="metadata"
+                          key={generatedVideoUrl}
+                        >
+                          <source src={generatedVideoUrl} type="video/mp4" />
+                          Your browser does not support the video tag.
+                        </video>
+                      ) : (
+                        <div className="w-full h-full flex items-center justify-center text-muted-foreground">
+                          <p>Video not available</p>
+                        </div>
+                      )}
                     </div>
                     
                     {/* Video Info & Actions */}
                     <div className="p-6">
+                      {/* Warning for partial generation */}
+                      {generationProgress.currentShot < generationProgress.totalShots && generationProgress.totalShots > 0 && (
+                        <div className="mb-4 p-3 bg-yellow-500/10 border border-yellow-500/30 rounded-lg">
+                          <p className="text-yellow-600 dark:text-yellow-400 text-sm">
+                            ⚠️ Only {generationProgress.currentShot} of {generationProgress.totalShots} shots were generated.
+                            Some shots failed due to API rate limits. The video contains available shots only.
+                          </p>
+                        </div>
+                      )}
+
                       <div className="flex items-center justify-between mb-4">
                         <div>
                           <h3 className="text-xl font-semibold text-foreground">Video Generated Successfully!</h3>
@@ -1024,7 +1256,30 @@ export default function RemixPage() {
                       
                       {/* Action Buttons */}
                       <div className="flex gap-3">
-                        <Button className="flex-1 bg-accent text-accent-foreground hover:bg-accent/90">
+                        <Button
+                          className="flex-1 bg-accent text-accent-foreground hover:bg-accent/90"
+                          disabled={!generatedVideoUrl}
+                          onClick={async () => {
+                            if (generatedVideoUrl) {
+                              try {
+                                // Fetch video as blob to handle cross-origin download
+                                const response = await fetch(generatedVideoUrl)
+                                const blob = await response.blob()
+                                const blobUrl = URL.createObjectURL(blob)
+                                const a = document.createElement("a")
+                                a.href = blobUrl
+                                a.download = `remix-${currentJobId || "video"}.mp4`
+                                document.body.appendChild(a)
+                                a.click()
+                                document.body.removeChild(a)
+                                URL.revokeObjectURL(blobUrl)
+                              } catch (e) {
+                                // Fallback: open in new tab
+                                window.open(generatedVideoUrl, "_blank")
+                              }
+                            }
+                          }}
+                        >
                           <Download className="w-4 h-4 mr-2" />
                           Download Video
                         </Button>
