@@ -21,6 +21,33 @@ app = FastAPI(title="AI 导演工作台 API / SocialSaver Backend")
 # SocialSaver 数据格式转换函数
 # ============================================================
 
+def parse_time_to_seconds(time_value) -> float:
+    """将时间值转换为秒数，支持 'MM:SS', 'HH:MM:SS' 格式或数字"""
+    if time_value is None:
+        return 0.0
+    if isinstance(time_value, (int, float)):
+        return float(time_value)
+    if isinstance(time_value, str):
+        time_value = time_value.strip()
+        if not time_value:
+            return 0.0
+        # 尝试解析 MM:SS 或 HH:MM:SS 格式
+        if ':' in time_value:
+            parts = time_value.split(':')
+            try:
+                if len(parts) == 2:  # MM:SS
+                    return float(parts[0]) * 60 + float(parts[1])
+                elif len(parts) == 3:  # HH:MM:SS
+                    return float(parts[0]) * 3600 + float(parts[1]) * 60 + float(parts[2])
+            except ValueError:
+                return 0.0
+        # 尝试直接转换为数字
+        try:
+            return float(time_value)
+        except ValueError:
+            return 0.0
+    return 0.0
+
 def convert_shot_to_socialsaver(shot: Dict[str, Any], job_id: str, base_url: str = "") -> Dict[str, Any]:
     """
     将 ReTake 的 shot 格式转换为 SocialSaver 的 StoryboardShot 格式
@@ -51,9 +78,9 @@ def convert_shot_to_socialsaver(shot: Dict[str, Any], job_id: str, base_url: str
         "firstFrameImage": first_frame,
         "visualDescription": visual_description,
         "contentDescription": shot.get("content_analysis", visual_description),
-        "startSeconds": float(shot.get("start_time", 0) or 0),
-        "endSeconds": float(shot.get("end_time", 0) or 0),
-        "durationSeconds": float(shot.get("end_time", 0) or 0) - float(shot.get("start_time", 0) or 0),
+        "startSeconds": parse_time_to_seconds(shot.get("start_time", 0)),
+        "endSeconds": parse_time_to_seconds(shot.get("end_time", 0)),
+        "durationSeconds": parse_time_to_seconds(shot.get("end_time", 0)) - parse_time_to_seconds(shot.get("start_time", 0)),
         "shotSize": cinematography.get("shot_scale", "MEDIUM"),
         "cameraAngle": cinematography.get("subject_orientation", "facing-camera"),
         "cameraMovement": cinematography.get("motion_vector", "static"),
