@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -33,6 +33,7 @@ import { StoryThemeTable } from "@/components/remix/story-theme-table"
 import { ScriptAnalysisTable } from "@/components/remix/script-analysis-table"
 import { StoryboardTable } from "@/components/remix/storyboard-table"
 import type { Asset, AssetType, StoryThemeAnalysis, ScriptAnalysis, StoryboardShot } from "@/lib/types/remix"
+import { getAssets, saveAssets, deleteAsset as deleteAssetFromStorage } from "@/lib/asset-storage"
 
 // Mock data for demonstration - includes full analysis data
 const mockThemeData: StoryThemeAnalysis = {
@@ -303,8 +304,22 @@ export default function AssetLibraryPage() {
   const [selectedType, setSelectedType] = useState<AssetType | "all">("all")
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid")
   const [selectedAsset, setSelectedAsset] = useState<Asset | null>(null)
-  const [assets, setAssets] = useState<Asset[]>(mockAssets)
+  const [assets, setAssets] = useState<Asset[]>([])
   const [showDetailView, setShowDetailView] = useState(false)
+  const [isLoading, setIsLoading] = useState(true)
+
+  // Load assets from localStorage on mount
+  useEffect(() => {
+    const storedAssets = getAssets()
+    // If no stored assets, use mock data as initial demo data
+    if (storedAssets.length === 0) {
+      setAssets(mockAssets)
+      saveAssets(mockAssets)
+    } else {
+      setAssets(storedAssets)
+    }
+    setIsLoading(false)
+  }, [])
 
   const filteredAssets = assets.filter((asset) => {
     const matchesSearch =
@@ -315,6 +330,7 @@ export default function AssetLibraryPage() {
   })
 
   const handleDeleteAsset = (id: string) => {
+    deleteAssetFromStorage(id)
     setAssets(assets.filter((a) => a.id !== id))
     if (selectedAsset?.id === id) {
       setSelectedAsset(null)
