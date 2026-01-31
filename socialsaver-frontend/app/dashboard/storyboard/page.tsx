@@ -220,6 +220,7 @@ export default function StoryboardAnalysisPage() {
   // 🔌 Real API State
   const [currentJobId, setCurrentJobId] = useState<string | null>(null)
   const [apiError, setApiError] = useState<string | null>(null)
+  const [sourceVideoFilename, setSourceVideoFilename] = useState<string | null>(null)
 
   const handleVideoSubmit = async (files: File[]) => {
     setUploadedFiles(files)
@@ -290,6 +291,9 @@ export default function StoryboardAnalysisPage() {
         storyboard: processedStoryboard,
       }
 
+      // 保存源视频文件名用于后续构建 URL
+      setSourceVideoFilename(storyboardData.sourceVideo || null)
+
       setAnalysisResult(realAnalysisResult)
       setStep("results")
     } catch (error) {
@@ -334,10 +338,20 @@ export default function StoryboardAnalysisPage() {
     // Reset API state
     setCurrentJobId(null)
     setApiError(null)
+    setSourceVideoFilename(null)
   }
   
   const handleSaveToLibrary = (name: string, tags: string[]) => {
     if (!analysisResult) return
+
+    // 构建源视频 URL（如果有 job_id 和 sourceVideoFilename）
+    const sourceVideoUrl = currentJobId && sourceVideoFilename
+      ? getAssetUrl(currentJobId, sourceVideoFilename)
+      : undefined
+
+    // 获取第一个 shot 的 firstFrameImage 作为缩略图
+    const thumbnail = analysisResult.storyboard[0]?.firstFrameImage || undefined
+
     saveStoryboardToLibrary(
       name,
       tags,
@@ -349,7 +363,9 @@ export default function StoryboardAnalysisPage() {
       uploadedFiles[0] ? {
         name: uploadedFiles[0].name,
         size: uploadedFiles[0].size,
-      } : undefined
+        url: sourceVideoUrl,
+      } : undefined,
+      thumbnail
     )
   }
 

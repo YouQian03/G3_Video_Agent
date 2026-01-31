@@ -742,7 +742,15 @@ export default function AssetLibraryPage() {
                 <CardContent className="p-4">
                   {/* Thumbnail */}
                   <div className="aspect-video bg-secondary rounded-lg mb-3 flex items-center justify-center overflow-hidden">
-                    <config.icon className="w-8 h-8 text-muted-foreground" />
+                    {asset.thumbnail ? (
+                      <img
+                        src={asset.thumbnail}
+                        alt={asset.name}
+                        className="w-full h-full object-cover"
+                      />
+                    ) : (
+                      <config.icon className="w-8 h-8 text-muted-foreground" />
+                    )}
                   </div>
 
                   {/* Info */}
@@ -813,8 +821,16 @@ export default function AssetLibraryPage() {
                     className="flex items-center gap-4 p-4 hover:bg-secondary/50 transition-colors cursor-pointer group"
                     onClick={() => handleViewDetails(asset)}
                   >
-                    <div className="w-12 h-12 bg-secondary rounded-lg flex items-center justify-center shrink-0">
-                      <config.icon className="w-6 h-6 text-muted-foreground" />
+                    <div className="w-12 h-12 bg-secondary rounded-lg flex items-center justify-center shrink-0 overflow-hidden">
+                      {asset.thumbnail ? (
+                        <img
+                          src={asset.thumbnail}
+                          alt={asset.name}
+                          className="w-full h-full object-cover"
+                        />
+                      ) : (
+                        <config.icon className="w-6 h-6 text-muted-foreground" />
+                      )}
                     </div>
                     <div className="flex-1 min-w-0">
                       <h3 className="font-medium text-foreground truncate">{asset.name}</h3>

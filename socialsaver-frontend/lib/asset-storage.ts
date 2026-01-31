@@ -104,14 +104,19 @@ export function saveStoryboardToLibrary(
     scriptAnalysis?: ScriptAnalysis
     storyboard?: StoryboardShot[]
   },
-  sourceVideo?: { name: string; size: number; url?: string }
+  sourceVideo?: { name: string; size: number; url?: string },
+  thumbnail?: string
 ): Asset {
+  // 如果没有提供 thumbnail，尝试从 storyboard 第一个 shot 获取
+  const finalThumbnail = thumbnail || (data.storyboard && data.storyboard[0]?.firstFrameImage) || undefined
+
   return addAsset({
     name,
     type: "storyboard",
     tags,
     data,
     sourceVideo,
+    thumbnail: finalThumbnail,
   } as Omit<Asset, "id" | "createdAt" | "updatedAt">)
 }
 
