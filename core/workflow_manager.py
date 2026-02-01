@@ -14,6 +14,11 @@ from core.changes import apply_global_style, replace_entity_reference
 from core.runner import run_pipeline, run_stylize, run_video_generate
 from core.utils import get_ffmpeg_path
 
+# Film IR 集成
+from core.film_ir_schema import create_empty_film_ir
+from core.film_ir_io import save_film_ir, load_film_ir, film_ir_exists
+from core.film_ir_manager import FilmIRManager
+
 # 引入拆解所需的库和逻辑
 from google import genai
 from analyze_video import DIRECTOR_METAPROMPT, wait_until_file_active, extract_json_array
@@ -130,18 +135,123 @@ class WorkflowManager:
         self.workflow = {
             "job_id": new_id,
             "source_video": "input.mp4",
+            "film_ir_path": "film_ir.json",  # 🎬 Film IR 关联
             "global": {"style_prompt": "Cinematic Realistic", "video_model": "veo"},
             "global_stages": {
-                "analyze": "SUCCESS", "extract": "SUCCESS", 
+                "analyze": "SUCCESS", "extract": "SUCCESS",
                 "stylize": "NOT_STARTED", "video_gen": "NOT_STARTED", "merge": "NOT_STARTED"
             },
             "shots": shots,
             "meta": {"attempts": 0, "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
         }
-        
+
         self.save()
+
+        # 🎬 初始化 Film IR (电影逻辑中间层)
+        self._initialize_film_ir(new_id, storyboard)
+
         print(f"✅ [Done] 视频拆解与切片完成，Job ID: {new_id}")
         return new_id
+
+    def _initialize_film_ir(self, job_id: str, storyboard: List[Dict]) -> None:
+        """
+        初始化 Film IR 结构
+        将原始分析数据填充到支柱 III (Shot Recipe) 的 concrete 层
+        """
+        ir = create_empty_film_ir(job_id, "input.mp4")
+
+        # 构建 Shot Recipe concrete 数据
+        shots_data = []
+        for s in storyboard:
+            shot_num = int(s.get("shot_number", 1))
+            sid = f"shot_{shot_num:02d}"
+
+            # 提取分镜数据
+            narrative_desc = s.get("frame_description") or s.get("content_analysis") or ""
+
+            shot_item = {
+                "shotId": sid,
+                "beatTag": self._infer_beat_tag(shot_num, len(storyboard)),
+                "startTime": s.get("start_time", "0:00"),
+                "endTime": s.get("end_time", "0:00"),
+                "durationSeconds": to_seconds(s.get("end_time", "0")) - to_seconds(s.get("start_time", "0")),
+
+                # 8 核心字段
+                "subject": narrative_desc,
+                "scene": s.get("content_analysis", ""),
+                "camera": {
+                    "shotSize": s.get("shot_scale", ""),
+                    "cameraAngle": s.get("subject_orientation", ""),
+                    "cameraMovement": s.get("camera_movement") or s.get("camera_type", ""),
+                    "focalLengthDepth": s.get("camera_type", "")
+                },
+                "lighting": s.get("lighting", "Natural lighting"),
+                "dynamics": s.get("motion_vector", ""),
+                "audio": {
+                    "soundDesign": "",
+                    "music": s.get("music_mood", ""),
+                    "dialogue": s.get("dialogue_voiceover", "")
+                },
+                "style": "",
+                "negative": "",
+
+                # 资产路径
+                "assets": {
+                    "firstFrame": f"frames/{sid}.png",
+                    "sourceSegment": f"source_segments/{sid}.mp4",
+                    "stylizedFrame": None,
+                    "video": None
+                }
+            }
+            shots_data.append(shot_item)
+
+        # 填充支柱 III concrete
+        ir["pillars"]["III_shotRecipe"]["concrete"] = {
+            "globalVisualLanguage": {
+                "visualStyle": "",
+                "colorPalette": "",
+                "lightingDesign": "",
+                "cameraPhilosophy": ""
+            },
+            "globalSoundDesign": {
+                "musicStyle": "",
+                "soundAtmosphere": "",
+                "rhythmPattern": ""
+            },
+            "symbolism": {
+                "repeatingImagery": "",
+                "symbolicMeaning": ""
+            },
+            "shots": shots_data
+        }
+
+        # 保存 Film IR
+        save_film_ir(self.job_dir, ir)
+        print(f"🎬 [Film IR] Initialized with {len(shots_data)} shots")
+
+        # 🎬 触发 Stage 1: Specific Analysis (Story Theme)
+        try:
+            ir_manager = FilmIRManager(job_id, self.project_dir)
+            result = ir_manager.run_stage("specificAnalysis")
+            if result.get("status") == "success":
+                print(f"✅ [Film IR] Story Theme analysis completed")
+            else:
+                print(f"⚠️ [Film IR] Story Theme analysis: {result.get('reason', 'unknown error')}")
+        except Exception as e:
+            print(f"⚠️ [Film IR] Story Theme analysis failed: {e}")
+            # 不阻塞主流程，继续执行
+
+    def _infer_beat_tag(self, shot_num: int, total_shots: int) -> str:
+        """推断分镜的节拍标签"""
+        ratio = shot_num / total_shots
+        if ratio <= 0.15:
+            return "HOOK"
+        elif ratio <= 0.4:
+            return "SETUP"
+        elif ratio <= 0.75:
+            return "TURN"
+        else:
+            return "CTA"
 
     def _run_gemini_analysis(self, video_path: Path):
         api_key = os.getenv("GEMINI_API_KEY")
@@ -1098,3 +1208,24 @@ class WorkflowManager:
             self.workflow["global_stages"]["merge"] = "SUCCESS"
         self.save()
         return "final_output.mp4"
+
+    # ============================================================
+    # Film IR 集成
+    # ============================================================
+
+    def get_film_ir_manager(self) -> FilmIRManager:
+        """
+        获取 Film IR 管理器实例
+
+        Returns:
+            FilmIRManager 实例
+        """
+        if not self.job_id:
+            raise RuntimeError("Job ID not set")
+        return FilmIRManager(self.job_id, self.project_dir)
+
+    def has_film_ir(self) -> bool:
+        """检查是否存在 Film IR"""
+        if not self.job_id:
+            return False
+        return film_ir_exists(self.job_dir)

@@ -13,6 +13,8 @@ from typing import Optional, Dict, Any, List, Union
 
 from core.workflow_manager import WorkflowManager
 from core.agent_engine import AgentEngine
+from core.film_ir_manager import FilmIRManager
+from core.film_ir_io import load_film_ir, film_ir_exists
 
 app = FastAPI(title="AI 导演工作台 API / SocialSaver Backend")
 
@@ -334,6 +336,193 @@ async def run_task(node_type: str, background_tasks: BackgroundTasks, shot_id: O
     
     background_tasks.add_task(manager.run_node, node_type, shot_id)
     return {"status": "started", "job_id": manager.job_id}
+
+
+# ============================================================
+# Film IR API 端点 (电影逻辑中间层)
+# ============================================================
+
+@app.get("/api/job/{job_id}/film_ir")
+async def get_film_ir(job_id: str):
+    """
+    获取完整 Film IR 数据
+    """
+    job_dir = Path("jobs") / job_id
+    if not job_dir.exists():
+        raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
+
+    if not film_ir_exists(job_dir):
+        raise HTTPException(status_code=404, detail=f"Film IR not found for job: {job_id}")
+
+    ir = load_film_ir(job_dir)
+    return ir
+
+
+@app.get("/api/job/{job_id}/film_ir/story_theme")
+async def get_film_ir_story_theme(job_id: str):
+    """
+    获取支柱 I: Story Theme (对应前端九维表格)
+    """
+    job_dir = Path("jobs") / job_id
+    if not job_dir.exists():
+        raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
+
+    ir_manager = FilmIRManager(job_id)
+    data = ir_manager.get_story_theme_for_frontend()
+
+    if not data:
+        raise HTTPException(status_code=404, detail="Story theme data not available")
+
+    return data
+
+
+@app.get("/api/job/{job_id}/film_ir/narrative")
+async def get_film_ir_narrative(job_id: str):
+    """
+    获取支柱 II: Narrative Template (对应前端 Script Analysis)
+    """
+    job_dir = Path("jobs") / job_id
+    if not job_dir.exists():
+        raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
+
+    ir_manager = FilmIRManager(job_id)
+    data = ir_manager.get_script_analysis_for_frontend()
+
+    if not data:
+        raise HTTPException(status_code=404, detail="Narrative template data not available")
+
+    return data
+
+
+@app.get("/api/job/{job_id}/film_ir/shots")
+async def get_film_ir_shots(job_id: str, request: Request):
+    """
+    获取支柱 III: Shot Recipe (分镜列表)
+    """
+    job_dir = Path("jobs") / job_id
+    if not job_dir.exists():
+        raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
+
+    base_url = str(request.base_url).rstrip("/")
+    ir_manager = FilmIRManager(job_id)
+    shots = ir_manager.get_storyboard_for_frontend(base_url)
+
+    return {"shots": shots}
+
+
+@app.get("/api/job/{job_id}/film_ir/render_strategy")
+async def get_film_ir_render_strategy(job_id: str):
+    """
+    获取支柱 IV: Render Strategy (执行层)
+    """
+    job_dir = Path("jobs") / job_id
+    if not job_dir.exists():
+        raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
+
+    ir_manager = FilmIRManager(job_id)
+    data = ir_manager.get_active_layer("IV_renderStrategy")
+
+    return data
+
+
+@app.get("/api/job/{job_id}/film_ir/stages")
+async def get_film_ir_stages(job_id: str):
+    """
+    获取 Film IR 阶段状态
+    """
+    job_dir = Path("jobs") / job_id
+    if not job_dir.exists():
+        raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
+
+    ir_manager = FilmIRManager(job_id)
+
+    return {
+        "jobId": job_id,
+        "stages": ir_manager.stages
+    }
+
+
+class RemixRequest(BaseModel):
+    prompt: str
+
+
+@app.post("/api/job/{job_id}/remix")
+async def trigger_remix(job_id: str, request: RemixRequest, background_tasks: BackgroundTasks):
+    """
+    触发意图注入 (Remix)
+    用户提交二创意图，触发 Stage 3-6 的执行
+    """
+    job_dir = Path("jobs") / job_id
+    if not job_dir.exists():
+        raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
+
+    ir_manager = FilmIRManager(job_id)
+
+    # 检查前置条件
+    if ir_manager.stages.get("abstraction") != "SUCCESS":
+        raise HTTPException(
+            status_code=400,
+            detail="Abstraction stage not completed. Please wait for video analysis to finish."
+        )
+
+    # 保存用户意图
+    ir_manager.set_user_intent(request.prompt)
+
+    # 后台执行意图注入管线
+    async def run_remix_pipeline():
+        try:
+            ir_manager.run_stage("intentInjection")
+            ir_manager.run_stage("assetGeneration")
+            ir_manager.run_stage("shotRefinement")
+        except Exception as e:
+            print(f"❌ Remix pipeline failed: {e}")
+
+    background_tasks.add_task(run_remix_pipeline)
+
+    return {
+        "status": "started",
+        "jobId": job_id,
+        "message": "Remix pipeline started"
+    }
+
+
+class MetaPromptRequest(BaseModel):
+    key: str
+    prompt: str
+
+
+@app.post("/api/job/{job_id}/film_ir/meta_prompt")
+async def set_meta_prompt(job_id: str, request: MetaPromptRequest):
+    """
+    设置 Meta Prompt (热更新)
+    """
+    job_dir = Path("jobs") / job_id
+    if not job_dir.exists():
+        raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
+
+    ir_manager = FilmIRManager(job_id)
+
+    try:
+        ir_manager.set_meta_prompt(request.key, request.prompt)
+        return {"status": "success", "key": request.key}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.get("/api/job/{job_id}/film_ir/hidden_template")
+async def get_hidden_template(job_id: str):
+    """
+    获取隐形模板 (抽象层数据)
+    """
+    job_dir = Path("jobs") / job_id
+    if not job_dir.exists():
+        raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
+
+    ir_manager = FilmIRManager(job_id)
+    template = ir_manager.get_hidden_template()
+
+    return template
+
 
 # --- 核心：防缓存中间件 ---
 @app.middleware("http")
