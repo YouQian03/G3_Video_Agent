@@ -18,6 +18,8 @@ interface LoginDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   defaultMode?: "login" | "register"
+  onSuccess?: (navigateTo?: string) => void
+  pendingNavigation?: string | null
 }
 
 function GoogleIcon({ className }: { className?: string }) {
@@ -31,7 +33,7 @@ function GoogleIcon({ className }: { className?: string }) {
   )
 }
 
-export function LoginDialog({ open, onOpenChange, defaultMode = "login" }: LoginDialogProps) {
+export function LoginDialog({ open, onOpenChange, defaultMode = "login", onSuccess, pendingNavigation }: LoginDialogProps) {
   const [isLogin, setIsLogin] = useState(defaultMode === "login")
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")

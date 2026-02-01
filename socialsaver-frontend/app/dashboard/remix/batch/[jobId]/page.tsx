@@ -177,11 +177,11 @@ export default function BatchJobDetailPage() {
           </TabsList>
 
           <TabsContent value="theme" className="mt-4">
-            <StoryThemeTable data={job.analysisResult.storyTheme} showSaveButtons={false} />
+            <StoryThemeTable data={job.analysisResult.storyTheme} showSaveButton={false} />
           </TabsContent>
 
           <TabsContent value="script" className="mt-4">
-            <ScriptAnalysisTable data={job.analysisResult.scriptAnalysis} showSaveButtons={false} />
+            <ScriptAnalysisTable data={job.analysisResult.scriptAnalysis} showSaveButton={false} />
           </TabsContent>
 
           <TabsContent value="storyboard" className="mt-4">
@@ -193,7 +193,7 @@ export default function BatchJobDetailPage() {
                 </CardTitle>
               </CardHeader>
               <CardContent>
-                <StoryboardTable shots={job.analysisResult.storyboard} showSaveButtons={false} />
+                <StoryboardTable data={job.analysisResult.storyboard} showSaveButtons={false} />
               </CardContent>
             </Card>
           </TabsContent>

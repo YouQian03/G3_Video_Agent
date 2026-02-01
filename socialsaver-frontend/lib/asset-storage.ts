@@ -66,7 +66,7 @@ export function updateAsset(id: string, updates: Partial<Asset>): Asset | null {
     ...assets[index],
     ...updates,
     updatedAt: new Date().toISOString(),
-  }
+  } as Asset
 
   saveAssets(assets)
   return assets[index]
@@ -172,7 +172,7 @@ export function saveScriptToLibrary(
     tags,
     data,
     sourceVideo,
-  } as Omit<Asset, "id" | "createdAt" | "updatedAt">)
+  } as unknown as Omit<Asset, "id" | "createdAt" | "updatedAt">)
 }
 
 /**

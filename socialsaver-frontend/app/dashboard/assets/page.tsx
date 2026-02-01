@@ -196,7 +196,7 @@ const mockStoryboardData: StoryboardShot[] = [
   },
 ]
 
-const mockAssets: Asset[] = [
+const mockAssets = [
   {
     id: "1",
     name: "Opening Shot - City Skyline",
@@ -313,8 +313,8 @@ export default function AssetLibraryPage() {
     const storedAssets = getAssets()
     // If no stored assets, use mock data as initial demo data
     if (storedAssets.length === 0) {
-      setAssets(mockAssets)
-      saveAssets(mockAssets)
+      setAssets(mockAssets as Asset[])
+      saveAssets(mockAssets as Asset[])
     } else {
       setAssets(storedAssets)
     }
@@ -481,28 +481,28 @@ export default function AssetLibraryPage() {
         )}
 
         {selectedAsset.type === "script" && (
-          <ScriptAnalysisTable data={selectedAsset.data as ScriptAnalysis} showSaveButton={false} />
+          <ScriptAnalysisTable data={selectedAsset.data as unknown as ScriptAnalysis} showSaveButton={false} />
         )}
 
         {selectedAsset.type === "storyboard" && (
           <>
             {/* Check if it's a complete analysis or single shot */}
-            {(selectedAsset.data as { storyTheme?: StoryThemeAnalysis }).storyTheme ? (
+            {(selectedAsset.data as unknown as { storyTheme?: StoryThemeAnalysis }).storyTheme ? (
               // Complete analysis with all tables
               <div className="space-y-6">
-                <StoryThemeTable 
-                  data={(selectedAsset.data as { storyTheme: StoryThemeAnalysis }).storyTheme} 
-                  showSaveButton={false} 
+                <StoryThemeTable
+                  data={(selectedAsset.data as unknown as { storyTheme: StoryThemeAnalysis }).storyTheme}
+                  showSaveButton={false}
                 />
-                {(selectedAsset.data as { scriptAnalysis?: ScriptAnalysis }).scriptAnalysis && (
-                  <ScriptAnalysisTable 
-                    data={(selectedAsset.data as { scriptAnalysis: ScriptAnalysis }).scriptAnalysis} 
-                    showSaveButton={false} 
+                {(selectedAsset.data as unknown as { scriptAnalysis?: ScriptAnalysis }).scriptAnalysis && (
+                  <ScriptAnalysisTable
+                    data={(selectedAsset.data as unknown as { scriptAnalysis: ScriptAnalysis }).scriptAnalysis}
+                    showSaveButton={false}
                   />
                 )}
-                {(selectedAsset.data as { storyboard?: StoryboardShot[] }).storyboard && (
-                  <StoryboardTable 
-                    data={(selectedAsset.data as { storyboard: StoryboardShot[] }).storyboard}
+                {(selectedAsset.data as unknown as { storyboard?: StoryboardShot[] }).storyboard && (
+                  <StoryboardTable
+                    data={(selectedAsset.data as unknown as { storyboard: StoryboardShot[] }).storyboard}
                     showSaveButtons={false}
                   />
                 )}

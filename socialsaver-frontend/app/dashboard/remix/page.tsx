@@ -551,15 +551,15 @@ export default function RemixPage() {
       const totalDuration = processedStoryboard.reduce((sum, s) => sum + s.durationSeconds, 0)
 
       // 🔌 Fetch real Story Theme and Script Analysis from Film IR API (with retry)
-      let storyThemeData = null
-      let scriptAnalysisData = null
-      let retries = 0
-      const maxRetries = 40 // Max 2 minutes for both analyses
+      let storyThemeData: any = null
+      let scriptAnalysisData: any = null
+      let filmIrRetries = 0
+      const maxFilmIrRetries = 40 // Max 2 minutes for both analyses
 
-      while (retries < maxRetries) {
+      while (filmIrRetries < maxFilmIrRetries) {
         try {
           // Fetch both in parallel
-          const [themeResult, scriptResult] = await Promise.all([
+          const [themeResult, scriptResult]: [any, any] = await Promise.all([
             storyThemeData ? Promise.resolve(storyThemeData) : getStoryTheme(uploadResult.job_id),
             scriptAnalysisData ? Promise.resolve(scriptAnalysisData) : getScriptAnalysis(uploadResult.job_id)
           ])
@@ -581,7 +581,7 @@ export default function RemixPage() {
           // Still processing, continue polling
         }
         await new Promise((resolve) => setTimeout(resolve, 3000))
-        retries++
+        filmIrRetries++
       }
 
       // Convert to RemixAnalysisResult format (use real data if available)
