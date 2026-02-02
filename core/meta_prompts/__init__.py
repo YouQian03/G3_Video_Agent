@@ -17,6 +17,14 @@ from .narrative_extraction import (
     extract_hidden_assets as extract_narrative_hidden_assets
 )
 
+from .shot_decomposition import (
+    SHOT_DECOMPOSITION_PROMPT,
+    convert_to_frontend_format as convert_shot_recipe_to_frontend,
+    extract_abstract_layer as extract_shot_recipe_abstract,
+    extract_first_frames as extract_shot_first_frames,
+    extract_dialogue_timeline as extract_shot_dialogue_timeline
+)
+
 __all__ = [
     # Story Theme (Pillar I)
     "STORY_THEME_ANALYSIS_PROMPT",
@@ -26,5 +34,11 @@ __all__ = [
     "NARRATIVE_EXTRACTION_PROMPT",
     "convert_narrative_to_frontend",
     "extract_narrative_abstract",
-    "extract_narrative_hidden_assets"
+    "extract_narrative_hidden_assets",
+    # Shot Recipe (Pillar III)
+    "SHOT_DECOMPOSITION_PROMPT",
+    "convert_shot_recipe_to_frontend",
+    "extract_shot_recipe_abstract",
+    "extract_shot_first_frames",
+    "extract_shot_dialogue_timeline"
 ]

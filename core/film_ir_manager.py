@@ -38,7 +38,12 @@ from core.meta_prompts import (
     NARRATIVE_EXTRACTION_PROMPT,
     convert_narrative_to_frontend,
     extract_narrative_abstract,
-    extract_narrative_hidden_assets
+    extract_narrative_hidden_assets,
+    SHOT_DECOMPOSITION_PROMPT,
+    convert_shot_recipe_to_frontend,
+    extract_shot_recipe_abstract,
+    extract_shot_first_frames,
+    extract_shot_dialogue_timeline
 )
 
 
@@ -270,9 +275,32 @@ class FilmIRManager:
             # 不阻塞流程，继续执行
 
         # ============================================================
-        # Step 3: Shot Decomposition (支柱 III) - 已在初始化时完成基础版本
+        # Step 3: Shot Decomposition (支柱 III) - Concrete + Abstract 融合输出
         # ============================================================
-        print(f"🎬 [Stage 1.3] Shot Recipe - using initialized data")
+        print(f"🎬 [Stage 1.3] Decomposing Shot Recipe...")
+
+        try:
+            shot_recipe_result = self._analyze_shot_recipe(video_path)
+            if shot_recipe_result:
+                # 提取多层数据
+                concrete_data = convert_shot_recipe_to_frontend(shot_recipe_result)
+                abstract_data = extract_shot_recipe_abstract(shot_recipe_result)
+                first_frames = extract_shot_first_frames(shot_recipe_result)
+                dialogue_timeline = extract_shot_dialogue_timeline(shot_recipe_result)
+
+                # 存储到支柱 III
+                self.ir["pillars"]["III_shotRecipe"]["concrete"] = concrete_data
+                self.ir["pillars"]["III_shotRecipe"]["abstract"] = abstract_data
+                # 附加数据存储到 metadata
+                self.ir["pillars"]["III_shotRecipe"]["firstFrames"] = first_frames
+                self.ir["pillars"]["III_shotRecipe"]["dialogueTimeline"] = dialogue_timeline
+                self.save()
+                print(f"✅ [Stage 1.3] Shot Recipe completed ({len(concrete_data.get('shots', []))} shots extracted)")
+            else:
+                print(f"⚠️ [Stage 1.3] Shot Recipe returned empty result")
+        except Exception as e:
+            print(f"❌ [Stage 1.3] Shot Recipe analysis failed: {e}")
+            # 不阻塞流程
 
         return {"status": "success", "message": "Specific analysis completed"}
 
@@ -386,6 +414,64 @@ class FilmIRManager:
         try:
             result = json.loads(response.text)
             print(f"✅ Narrative extraction received")
+            return result
+        except json.JSONDecodeError as e:
+            print(f"❌ Failed to parse JSON response: {e}")
+            print(f"Raw response: {response.text[:500]}...")
+            raise
+
+    def _analyze_shot_recipe(self, video_path: Path) -> Optional[Dict[str, Any]]:
+        """
+        调用 Gemini API 进行分镜拆解 (Concrete + Abstract 融合输出)
+
+        Args:
+            video_path: 视频文件路径
+
+        Returns:
+            AI 分析结果，包含 shotRecipe.globalSettings 和 shots[]
+        """
+        api_key = os.getenv("GEMINI_API_KEY")
+        if not api_key:
+            raise RuntimeError("GEMINI_API_KEY not set")
+
+        client = genai.Client(api_key=api_key)
+
+        # 上传视频文件
+        print(f"📤 Uploading video to Gemini for Shot Recipe analysis...")
+        uploaded_file = client.files.upload(file=str(video_path))
+
+        # 等待文件处理完成
+        import time
+        while uploaded_file.state.name == "PROCESSING":
+            print(f"⏳ Waiting for video processing...")
+            time.sleep(3)
+            uploaded_file = client.files.get(name=uploaded_file.name)
+
+        if uploaded_file.state.name != "ACTIVE":
+            raise RuntimeError(f"Video processing failed: {uploaded_file.state.name}")
+
+        print(f"✅ Video ready for Shot Recipe analysis")
+
+        # 构建 Prompt
+        prompt = SHOT_DECOMPOSITION_PROMPT.replace(
+            "{input_content}",
+            "[Video file attached - perform frame-by-frame technical decomposition for Imagen 4.0 + Veo 3.1 pipeline]"
+        )
+
+        # 调用 Gemini API
+        print(f"🤖 Calling Gemini API for Shot Recipe decomposition...")
+        response = client.models.generate_content(
+            model="gemini-2.0-flash",
+            contents=[prompt, uploaded_file],
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json"
+            )
+        )
+
+        # 解析 JSON 响应
+        try:
+            result = json.loads(response.text)
+            print(f"✅ Shot Recipe decomposition received")
             return result
         except json.JSONDecodeError as e:
             print(f"❌ Failed to parse JSON response: {e}")

@@ -294,21 +294,24 @@ class ShotCinematography(TypedDict):
 
 class ShotAudio(TypedDict):
     """分镜音频"""
-    soundDesign: str  # 声音设计
-    music: str  # BGM
-    dialogue: str  # 对白
+    soundDesign: str  # 声音设计 (环境音效)
+    music: str  # BGM 描述
+    dialogue: str  # 对白说明 (说话者/情绪)
+    dialogueText: str  # 对白原文转录 (用于 Lip-sync)
 
 
 class ShotRecipeItem(TypedDict):
-    """单个分镜配方 - 8 核心字段"""
+    """单个分镜配方 - 核心字段"""
     shotId: str
-    beatTag: str  # HOOK/SETUP/TURN/CTA
+    beatTag: str  # HOOK/SETUP/CATALYST/RISING/TURN/CLIMAX/FALLING/RESOLUTION
     startTime: str
     endTime: str
     durationSeconds: float
+    longTake: bool  # 是否为长镜头 (>5s)
 
-    # 8 核心字段
-    subject: str  # 主体描述 (肢体状态/动作/起始帧引用)
+    # 核心字段
+    firstFrameDescription: str  # 首帧描述 (Imagen 4.0 关键输入)
+    subject: str  # 主体描述 (动作轨迹/情绪)
     scene: str  # 场景描述 (时间/地点/光影/氛围)
     camera: ShotCinematography  # 镜头语言
     lighting: str  # 光影配方
@@ -352,11 +355,33 @@ class ShotRecipeAbstract(TypedDict):
     shotFunctions: List[ShotFunctionAbstract]
 
 
+class FirstFrameData(TypedDict):
+    """首帧数据 - 用于 Imagen 4.0 生成"""
+    shotId: str
+    firstFrameDescription: str
+    camera: ShotCinematography
+    lighting: str
+    style: str
+    negative: str
+
+
+class DialogueTimelineItem(TypedDict):
+    """对白时间线项 - 用于 Lip-sync"""
+    shotId: str
+    startTime: str
+    endTime: str
+    durationSeconds: float
+    dialogueText: str
+    dialogueDelivery: str
+
+
 class ShotRecipePillar(TypedDict):
     """支柱 III 完整结构"""
     concrete: Optional[ShotRecipeConcrete]
     abstract: Optional[ShotRecipeAbstract]
     remixed: Optional[ShotRecipeConcrete]
+    firstFrames: Optional[List[FirstFrameData]]  # Imagen 4.0 首帧数据
+    dialogueTimeline: Optional[List[DialogueTimelineItem]]  # Lip-sync 对白时间线
 
 
 # ============================================================
@@ -583,7 +608,9 @@ def create_empty_film_ir(job_id: str, source_video: str = "") -> Dict[str, Any]:
             "III_shotRecipe": {
                 "concrete": None,
                 "abstract": None,
-                "remixed": None
+                "remixed": None,
+                "firstFrames": None,
+                "dialogueTimeline": None
             },
             "IV_renderStrategy": {
                 "identityAnchors": {
