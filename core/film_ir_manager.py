@@ -217,7 +217,7 @@ class FilmIRManager:
         阶段 1: 具体分析
         调用 Meta Prompts 提取四大支柱的 concrete 数据
 
-        当前实现: storyThemeAnalysis (支柱 I)
+        优化: 视频只上传一次，三个分析复用同一个文件引用
         """
         print(f"🔍 [Stage 1] Running specific analysis for {self.job_id}...")
 
@@ -227,12 +227,23 @@ class FilmIRManager:
             return {"status": "error", "reason": f"Video file not found: {video_path}"}
 
         # ============================================================
+        # 🚀 统一上传视频 (只上传一次，三个分析复用)
+        # ============================================================
+        print(f"📤 [Stage 1.0] Uploading video to Gemini (once for all analyses)...")
+        try:
+            uploaded_file, client = self._upload_video_to_gemini(video_path)
+            print(f"✅ [Stage 1.0] Video uploaded and ready: {uploaded_file.name}")
+        except Exception as e:
+            print(f"❌ [Stage 1.0] Video upload failed: {e}")
+            return {"status": "error", "reason": f"Video upload failed: {e}"}
+
+        # ============================================================
         # Step 1: Story Theme Analysis (支柱 I) - Concrete + Abstract 融合输出
         # ============================================================
         print(f"📊 [Stage 1.1] Analyzing Story Theme...")
 
         try:
-            story_theme_result = self._analyze_story_theme(video_path)
+            story_theme_result = self._analyze_story_theme(uploaded_file, client)
             if story_theme_result:
                 # 提取双层数据
                 concrete_data = convert_story_theme_to_frontend(story_theme_result)
@@ -255,7 +266,7 @@ class FilmIRManager:
         print(f"📝 [Stage 1.2] Extracting Narrative Template...")
 
         try:
-            narrative_result = self._analyze_narrative(video_path)
+            narrative_result = self._analyze_narrative(uploaded_file, client)
             if narrative_result:
                 # 提取三层数据
                 concrete_data = convert_narrative_to_frontend(narrative_result)
@@ -280,7 +291,7 @@ class FilmIRManager:
         print(f"🎬 [Stage 1.3] Decomposing Shot Recipe...")
 
         try:
-            shot_recipe_result = self._analyze_shot_recipe(video_path)
+            shot_recipe_result = self._analyze_shot_recipe(uploaded_file, client)
             if shot_recipe_result:
                 # 提取多层数据
                 concrete_data = convert_shot_recipe_to_frontend(shot_recipe_result)
@@ -304,16 +315,18 @@ class FilmIRManager:
 
         return {"status": "success", "message": "Specific analysis completed"}
 
-    def _analyze_story_theme(self, video_path: Path) -> Optional[Dict[str, Any]]:
+    def _upload_video_to_gemini(self, video_path: Path) -> tuple:
         """
-        调用 Gemini API 分析视频主题
+        统一上传视频到 Gemini Files API
 
         Args:
             video_path: 视频文件路径
 
         Returns:
-            AI 分析结果 (原始格式)
+            (uploaded_file, client) 元组，供后续分析复用
         """
+        import time
+
         api_key = os.getenv("GEMINI_API_KEY")
         if not api_key:
             raise RuntimeError("GEMINI_API_KEY not set")
@@ -321,11 +334,9 @@ class FilmIRManager:
         client = genai.Client(api_key=api_key)
 
         # 上传视频文件
-        print(f"📤 Uploading video to Gemini...")
         uploaded_file = client.files.upload(file=str(video_path))
 
         # 等待文件处理完成
-        import time
         while uploaded_file.state.name == "PROCESSING":
             print(f"⏳ Waiting for video processing...")
             time.sleep(3)
@@ -334,8 +345,19 @@ class FilmIRManager:
         if uploaded_file.state.name != "ACTIVE":
             raise RuntimeError(f"Video processing failed: {uploaded_file.state.name}")
 
-        print(f"✅ Video uploaded and ready")
+        return uploaded_file, client
 
+    def _analyze_story_theme(self, uploaded_file, client) -> Optional[Dict[str, Any]]:
+        """
+        调用 Gemini API 分析视频主题
+
+        Args:
+            uploaded_file: 已上传的 Gemini 文件引用
+            client: Gemini 客户端实例
+
+        Returns:
+            AI 分析结果 (原始格式)
+        """
         # 构建 Prompt (替换 {input_content} 占位符)
         prompt = STORY_THEME_ANALYSIS_PROMPT.replace(
             "{input_content}",
@@ -362,38 +384,17 @@ class FilmIRManager:
             print(f"Raw response: {response.text[:500]}...")
             raise
 
-    def _analyze_narrative(self, video_path: Path) -> Optional[Dict[str, Any]]:
+    def _analyze_narrative(self, uploaded_file, client) -> Optional[Dict[str, Any]]:
         """
         调用 Gemini API 提取叙事模板 (Concrete + Abstract 融合输出)
 
         Args:
-            video_path: 视频文件路径
+            uploaded_file: 已上传的 Gemini 文件引用
+            client: Gemini 客户端实例
 
         Returns:
             AI 分析结果，包含 narrativeTemplate.*.concrete 和 *.abstract
         """
-        api_key = os.getenv("GEMINI_API_KEY")
-        if not api_key:
-            raise RuntimeError("GEMINI_API_KEY not set")
-
-        client = genai.Client(api_key=api_key)
-
-        # 上传视频文件 (如果已上传则复用)
-        print(f"📤 Uploading video to Gemini for Narrative analysis...")
-        uploaded_file = client.files.upload(file=str(video_path))
-
-        # 等待文件处理完成
-        import time
-        while uploaded_file.state.name == "PROCESSING":
-            print(f"⏳ Waiting for video processing...")
-            time.sleep(3)
-            uploaded_file = client.files.get(name=uploaded_file.name)
-
-        if uploaded_file.state.name != "ACTIVE":
-            raise RuntimeError(f"Video processing failed: {uploaded_file.state.name}")
-
-        print(f"✅ Video ready for Narrative analysis")
-
         # 构建 Prompt
         prompt = NARRATIVE_EXTRACTION_PROMPT.replace(
             "{input_content}",
@@ -420,38 +421,17 @@ class FilmIRManager:
             print(f"Raw response: {response.text[:500]}...")
             raise
 
-    def _analyze_shot_recipe(self, video_path: Path) -> Optional[Dict[str, Any]]:
+    def _analyze_shot_recipe(self, uploaded_file, client) -> Optional[Dict[str, Any]]:
         """
         调用 Gemini API 进行分镜拆解 (Concrete + Abstract 融合输出)
 
         Args:
-            video_path: 视频文件路径
+            uploaded_file: 已上传的 Gemini 文件引用
+            client: Gemini 客户端实例
 
         Returns:
             AI 分析结果，包含 shotRecipe.globalSettings 和 shots[]
         """
-        api_key = os.getenv("GEMINI_API_KEY")
-        if not api_key:
-            raise RuntimeError("GEMINI_API_KEY not set")
-
-        client = genai.Client(api_key=api_key)
-
-        # 上传视频文件
-        print(f"📤 Uploading video to Gemini for Shot Recipe analysis...")
-        uploaded_file = client.files.upload(file=str(video_path))
-
-        # 等待文件处理完成
-        import time
-        while uploaded_file.state.name == "PROCESSING":
-            print(f"⏳ Waiting for video processing...")
-            time.sleep(3)
-            uploaded_file = client.files.get(name=uploaded_file.name)
-
-        if uploaded_file.state.name != "ACTIVE":
-            raise RuntimeError(f"Video processing failed: {uploaded_file.state.name}")
-
-        print(f"✅ Video ready for Shot Recipe analysis")
-
         # 构建 Prompt
         prompt = SHOT_DECOMPOSITION_PROMPT.replace(
             "{input_content}",
