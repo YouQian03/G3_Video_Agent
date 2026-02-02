@@ -130,6 +130,16 @@ def extract_json_array(text: str):
 
     s = text.strip()
 
+    # 🔧 Remove markdown code blocks if present
+    if s.startswith("```"):
+        # Find the end of the code block
+        lines = s.split('\n')
+        if lines[0].startswith("```"):
+            lines = lines[1:]  # Remove opening ```json or ```
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]  # Remove closing ```
+        s = '\n'.join(lines).strip()
+
     # Find JSON array bounds
     l = s.find("[")
     r = s.rfind("]")
@@ -150,9 +160,41 @@ def extract_json_array(text: str):
     json_str = re.sub(r'//.*?\n', '\n', json_str)
     json_str = re.sub(r'/\*.*?\*/', '', json_str, flags=re.DOTALL)
 
-    # 3. Fix unquoted keys (common LLM error)
-    # Match patterns like { key: or , key: and ensure key is quoted
-    json_str = re.sub(r'([{,]\s*)([a-zA-Z_][a-zA-Z0-9_]*)\s*:', r'\1"\2":', json_str)
+    # 3. Fix unquoted keys (common LLM error) - be more careful with regex
+    # Only match keys that are clearly unquoted (not inside strings)
+    def fix_unquoted_keys(match):
+        prefix = match.group(1)
+        key = match.group(2)
+        return f'{prefix}"{key}":'
+
+    json_str = re.sub(r'([{,]\s*)([a-zA-Z_][a-zA-Z0-9_]*)\s*:', fix_unquoted_keys, json_str)
+
+    # 4. Fix newlines inside string values (common LLM error)
+    # Replace actual newlines inside strings with \n escape
+    def fix_string_newlines(s):
+        result = []
+        in_string = False
+        escape_next = False
+        for i, char in enumerate(s):
+            if escape_next:
+                result.append(char)
+                escape_next = False
+                continue
+            if char == '\\':
+                result.append(char)
+                escape_next = True
+                continue
+            if char == '"':
+                in_string = not in_string
+                result.append(char)
+                continue
+            if char == '\n' and in_string:
+                result.append('\\n')
+                continue
+            result.append(char)
+        return ''.join(result)
+
+    json_str = fix_string_newlines(json_str)
 
     try:
         return json.loads(json_str)
@@ -161,10 +203,27 @@ def extract_json_array(text: str):
         print(f"⚠️ JSON 解析失败，尝试进一步修复...")
         print(f"错误位置: {e.msg} at line {e.lineno} col {e.colno}")
 
-        # 4. Last resort: try to fix single quotes
+        # Print context around error
+        lines = json_str.split('\n')
+        error_line = e.lineno - 1
+        start = max(0, error_line - 2)
+        end = min(len(lines), error_line + 3)
+        print(f"错误上下文:")
+        for i in range(start, end):
+            marker = ">>> " if i == error_line else "    "
+            print(f"{marker}{i+1}: {lines[i][:100]}")
+
+        # 5. Last resort: try to fix single quotes
         json_str_fixed = json_str.replace("'", '"')
         try:
             return json.loads(json_str_fixed)
+        except:
+            pass
+
+        # 6. Try using ast.literal_eval as fallback (handles some edge cases)
+        try:
+            import ast
+            return ast.literal_eval(json_str)
         except:
             pass
 

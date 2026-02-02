@@ -254,6 +254,7 @@ class WorkflowManager:
             return "CTA"
 
     def _run_gemini_analysis(self, video_path: Path):
+        from google.genai import types
         api_key = os.getenv("GEMINI_API_KEY")
         client = genai.Client(api_key=api_key)
         uploaded = client.files.upload(file=str(video_path))
@@ -261,6 +262,9 @@ class WorkflowManager:
         response = client.models.generate_content(
             model="gemini-2.0-flash",
             contents=[DIRECTOR_METAPROMPT, video_file],
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json"
+            )
         )
         raw_shots = extract_json_array(response.text)
 
