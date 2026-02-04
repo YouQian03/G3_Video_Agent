@@ -283,3 +283,450 @@ export async function pollJobStatus(
 
   throw new Error("Polling timeout");
 }
+
+// ============================================================
+// M4: Intent Injection (Remix) API
+// ============================================================
+
+export interface RemixResponse {
+  status: string;
+  jobId: string;
+  message: string;
+  userPrompt: string;
+  referenceImages: string[];
+}
+
+export interface RemixStatusResponse {
+  jobId: string;
+  status: string;
+  started_at?: string;
+  completed_at?: string;
+  error?: string;
+}
+
+export interface RemixDiffEntry {
+  shotId: string;
+  beatTag: string;
+  changes: { type: string; description: string }[];
+  originalFirstFrame: string;
+  remixedFirstFrame: string;
+  remixNotes: string;
+}
+
+export interface RemixDiffResponse {
+  jobId: string;
+  hasDiff: boolean;
+  diff: RemixDiffEntry[];
+  summary: {
+    totalShots: number;
+    shotsModified: number;
+    primaryChanges: string[];
+    styleApplied: string | null;
+    moodShift: string | null;
+    preservedElements: string[];
+  };
+}
+
+export interface T2IPrompt {
+  shotId: string;
+  prompt: string;
+  cameraPreserved: {
+    shotSize: string;
+    cameraAngle: string;
+    cameraMovement: string;
+    focalLengthDepth: string;
+  };
+  appliedAnchors: {
+    characters: string[];
+    environments: string[];
+  };
+}
+
+export interface I2VPrompt {
+  shotId: string;
+  prompt: string;
+  durationSeconds: number;
+  cameraPreserved: {
+    shotSize: string;
+    cameraAngle: string;
+    cameraMovement: string;
+    focalLengthDepth: string;
+  };
+  firstFrameInheritance: boolean;
+}
+
+export interface IdentityAnchor {
+  anchorId: string;
+  anchorName: string;
+  detailedDescription: string;
+  originalPlaceholder?: string;
+  persistentAttributes?: string[];
+  imageReference?: string | null;
+  styleAdaptation?: string;
+  atmosphericConditions?: string;
+}
+
+export interface RemixPromptsResponse {
+  jobId: string;
+  t2iPrompts: T2IPrompt[];
+  i2vPrompts: I2VPrompt[];
+  identityAnchors: {
+    characters: IdentityAnchor[];
+    environments: IdentityAnchor[];
+  };
+}
+
+/**
+ * 触发 Intent Injection (M4 Remix)
+ */
+export async function triggerRemix(
+  jobId: string,
+  prompt: string,
+  referenceImages?: string[]
+): Promise<RemixResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/job/${jobId}/remix`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      prompt,
+      reference_images: referenceImages || [],
+    }),
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: "Remix failed" }));
+    throw new Error(error.detail || "Remix failed");
+  }
+
+  return response.json();
+}
+
+/**
+ * 获取 Remix 状态
+ */
+export async function getRemixStatus(jobId: string): Promise<RemixStatusResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/job/${jobId}/remix/status`);
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: "Failed to fetch remix status" }));
+    throw new Error(error.detail || "Failed to fetch remix status");
+  }
+
+  return response.json();
+}
+
+/**
+ * 获取 Remix Diff (concrete vs remixed)
+ */
+export async function getRemixDiff(jobId: string): Promise<RemixDiffResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/job/${jobId}/remix/diff`);
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: "Failed to fetch remix diff" }));
+    throw new Error(error.detail || "Failed to fetch remix diff");
+  }
+
+  return response.json();
+}
+
+/**
+ * 获取 Remix Prompts (T2I/I2V)
+ */
+export async function getRemixPrompts(jobId: string): Promise<RemixPromptsResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/job/${jobId}/remix/prompts`);
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: "Failed to fetch remix prompts" }));
+    throw new Error(error.detail || "Failed to fetch remix prompts");
+  }
+
+  return response.json();
+}
+
+/**
+ * 轮询 Remix 状态直到完成
+ */
+export async function pollRemixStatus(
+  jobId: string,
+  onUpdate: (status: RemixStatusResponse) => void,
+  intervalMs: number = 2000,
+  maxAttempts: number = 60
+): Promise<RemixStatusResponse> {
+  let attempts = 0;
+
+  while (attempts < maxAttempts) {
+    const status = await getRemixStatus(jobId);
+    onUpdate(status);
+
+    if (status.status === "completed" || status.status === "failed") {
+      return status;
+    }
+
+    await new Promise(resolve => setTimeout(resolve, intervalMs));
+    attempts++;
+  }
+
+  throw new Error("Remix polling timeout");
+}
+
+// ============================================================
+// M5: Asset Generation API
+// ============================================================
+
+export interface AssetGenerationResponse {
+  status: string;
+  jobId: string;
+  message: string;
+  assetsToGenerate?: {
+    characters: number;
+    characterViews: number;
+    environments: number;
+    total: number;
+  };
+}
+
+export interface AssetGenerationStatusResponse {
+  jobId: string;
+  status: string;
+  started_at?: string;
+  completed_at?: string;
+  result?: {
+    status: string;
+    message: string;
+    generated: number;
+    failed: number;
+    total: number;
+    assets_dir: string;
+  };
+  error?: string;
+}
+
+export interface CharacterAsset {
+  anchorId: string;
+  name: string;
+  status: string;
+  threeViews: {
+    front: string | null;
+    side: string | null;
+    back: string | null;
+  };
+}
+
+export interface EnvironmentAsset {
+  anchorId: string;
+  name: string;
+  status: string;
+  referenceImage: string | null;
+}
+
+export interface GeneratedAssetsResponse {
+  jobId: string;
+  assets: {
+    characters: CharacterAsset[];
+    environments: EnvironmentAsset[];
+  };
+  assetsDir: string;
+}
+
+/**
+ * 触发资产生成 (M5)
+ */
+export async function triggerAssetGeneration(jobId: string): Promise<AssetGenerationResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/job/${jobId}/generate-assets`, {
+    method: "POST",
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: "Asset generation failed" }));
+    throw new Error(error.detail || "Asset generation failed");
+  }
+
+  return response.json();
+}
+
+/**
+ * 获取资产生成状态
+ */
+export async function getAssetGenerationStatus(jobId: string): Promise<AssetGenerationStatusResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/job/${jobId}/assets/status`);
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: "Failed to fetch asset status" }));
+    throw new Error(error.detail || "Failed to fetch asset status");
+  }
+
+  return response.json();
+}
+
+/**
+ * 获取已生成的资产
+ */
+export async function getGeneratedAssets(jobId: string): Promise<GeneratedAssetsResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/job/${jobId}/assets`);
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: "Failed to fetch assets" }));
+    throw new Error(error.detail || "Failed to fetch assets");
+  }
+
+  return response.json();
+}
+
+/**
+ * 轮询资产生成状态直到完成
+ */
+export async function pollAssetGeneration(
+  jobId: string,
+  onUpdate: (status: AssetGenerationStatusResponse) => void,
+  intervalMs: number = 3000,
+  maxAttempts: number = 40
+): Promise<AssetGenerationStatusResponse> {
+  let attempts = 0;
+
+  while (attempts < maxAttempts) {
+    const status = await getAssetGenerationStatus(jobId);
+    onUpdate(status);
+
+    if (status.status === "completed" || status.status === "failed" || status.status === "partial") {
+      return status;
+    }
+
+    await new Promise(resolve => setTimeout(resolve, intervalMs));
+    attempts++;
+  }
+
+  throw new Error("Asset generation polling timeout");
+}
+
+// ============================================================
+// Character Ledger API (角色清单)
+// ============================================================
+
+export interface CharacterEntity {
+  entityId: string;
+  entityType: string;
+  importance: "PRIMARY" | "SECONDARY" | "BACKGROUND";
+  displayName: string;
+  visualSignature: string;
+  detailedDescription: string;
+  appearsInShots: string[];
+  shotCount: number;
+  trackingConfidence?: string;
+  visualCues?: string[];
+  bindingStatus?: "BOUND" | "UNBOUND";
+  boundAsset?: {
+    assetId: string;
+    name: string;
+    imageUrl?: string;
+  } | null;
+}
+
+export interface EnvironmentEntity {
+  entityId: string;
+  entityType: string;
+  importance: "PRIMARY" | "SECONDARY";
+  displayName: string;
+  visualSignature: string;
+  detailedDescription: string;
+  appearsInShots: string[];
+  shotCount: number;
+  bindingStatus?: "BOUND" | "UNBOUND";
+  boundAsset?: {
+    assetId: string;
+    name: string;
+    imageUrl?: string;
+  } | null;
+}
+
+export interface CharacterLedgerResponse {
+  jobId: string;
+  characterLedger: CharacterEntity[];
+  environmentLedger: EnvironmentEntity[];
+  summary: {
+    totalCharacters: number;
+    primaryCharacters: number;
+    secondaryCharacters: number;
+    totalEnvironments: number;
+  };
+}
+
+/**
+ * 获取角色清单 (Character Ledger)
+ */
+export async function getCharacterLedger(jobId: string): Promise<CharacterLedgerResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/job/${jobId}/character-ledger`);
+
+  if (!response.ok) {
+    if (response.status === 404) {
+      return {
+        jobId,
+        characterLedger: [],
+        environmentLedger: [],
+        summary: {
+          totalCharacters: 0,
+          primaryCharacters: 0,
+          secondaryCharacters: 0,
+          totalEnvironments: 0,
+        },
+      };
+    }
+    const error = await response.json().catch(() => ({ detail: "Failed to fetch character ledger" }));
+    throw new Error(error.detail || "Failed to fetch character ledger");
+  }
+
+  return response.json();
+}
+
+/**
+ * 绑定资产到实体
+ */
+export async function bindAssetToEntity(
+  jobId: string,
+  entityId: string,
+  assetName: string,
+  detailedDescription?: string,
+  assetPath?: string
+): Promise<{ status: string; message: string }> {
+  const response = await fetch(`${API_BASE_URL}/api/job/${jobId}/bind-asset`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      entityId,
+      assetType: assetPath ? "uploaded" : "generated",
+      assetPath: assetPath || null,
+      anchorId: `anchor_${entityId}`,
+      anchorName: assetName,
+      detailedDescription: detailedDescription || assetName,
+    }),
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: "Failed to bind asset" }));
+    throw new Error(error.detail || "Failed to bind asset");
+  }
+
+  return response.json();
+}
+
+/**
+ * 解绑资产
+ */
+export async function unbindAsset(
+  jobId: string,
+  entityId: string
+): Promise<{ status: string; message: string }> {
+  const response = await fetch(`${API_BASE_URL}/api/job/${jobId}/bind-asset/${entityId}`, {
+    method: "DELETE",
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: "Failed to unbind asset" }));
+    throw new Error(error.detail || "Failed to unbind asset");
+  }
+
+  return response.json();
+}

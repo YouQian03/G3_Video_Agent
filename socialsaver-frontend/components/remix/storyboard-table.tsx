@@ -23,6 +23,13 @@ interface StoryboardTableProps {
 }
 
 export function StoryboardTable({ data, title = "Storyboard Breakdown", showSaveButtons = true }: StoryboardTableProps) {
+  // Debug: Log each shot's image URL
+  console.log("🎬 StoryboardTable data:", data?.map(s => ({
+    shotNumber: s.shotNumber,
+    image: s.firstFrameImage,
+    startSec: s.startSeconds
+  })))
+
   const [saveDialogOpen, setSaveDialogOpen] = useState(false)
   const [selectedShot, setSelectedShot] = useState<StoryboardShot | null>(null)
 

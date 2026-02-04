@@ -7,6 +7,7 @@ import { VideoUpload } from "@/components/remix/video-upload"
 import { StoryThemeTable } from "@/components/remix/story-theme-table"
 import { ScriptAnalysisTable } from "@/components/remix/script-analysis-table"
 import { StoryboardTable } from "@/components/remix/storyboard-table"
+import { CharacterInventoryTable } from "@/components/remix/character-inventory-table"
 import { GeneratedScriptCard } from "@/components/remix/generated-script"
 import { StoryboardChat } from "@/components/remix/storyboard-chat"
 import { StepIndicator } from "@/components/remix/step-indicator"
@@ -34,7 +35,10 @@ import {
   sendAgentChat,
   runTask,
   getAssetUrl,
+  getCharacterLedger,
   type SocialSaverStoryboard,
+  type CharacterEntity,
+  type EnvironmentEntity,
 } from "@/lib/api"
 
 // Step definitions - now with 5 steps including character/scene views
@@ -406,6 +410,10 @@ export default function RemixPage() {
   const [apiError, setApiError] = useState<string | null>(null)
   const [realStoryboard, setRealStoryboard] = useState<SocialSaverStoryboard | null>(null)
 
+  // Character Ledger State
+  const [characterLedger, setCharacterLedger] = useState<CharacterEntity[]>([])
+  const [environmentLedger, setEnvironmentLedger] = useState<EnvironmentEntity[]>([])
+
   // 🎬 Video Generation State
   const [generationProgress, setGenerationProgress] = useState<{
     stage: "idle" | "stylizing" | "generating" | "merging" | "complete" | "error"
@@ -537,11 +545,12 @@ export default function RemixPage() {
         throw new Error("Video analysis timeout or failed")
       }
 
-      // Process image URLs to be full URLs
+      // Process image URLs to be full URLs (with cache-busting timestamp)
+      const cacheBuster = Date.now()
       const processedStoryboard = storyboardData.storyboard.map((shot) => ({
         ...shot,
         firstFrameImage: shot.firstFrameImage
-          ? getAssetUrl(uploadResult.job_id, shot.firstFrameImage)
+          ? `${getAssetUrl(uploadResult.job_id, shot.firstFrameImage)}?t=${cacheBuster}`
           : "",
       }))
 
@@ -602,6 +611,21 @@ export default function RemixPage() {
       const modifiedAnalysis = generateModifiedAnalysis(realAnalysisResult, prompt)
       setAnalysisResult(modifiedAnalysis)
 
+      // 🔌 Fetch Character Ledger
+      try {
+        const ledgerData = await getCharacterLedger(uploadResult.job_id)
+        console.log("📋 Raw Character Ledger Response:", ledgerData)
+        console.log("📋 characterLedger:", ledgerData.characterLedger?.length || 0, "items")
+        console.log("📋 environmentLedger:", ledgerData.environmentLedger?.length || 0, "items")
+        setCharacterLedger(ledgerData.characterLedger || [])
+        setEnvironmentLedger(ledgerData.environmentLedger || [])
+        console.log("✅ Character Ledger received:", ledgerData.summary)
+      } catch (e) {
+        console.warn("Character Ledger not available:", e)
+        setCharacterLedger([])
+        setEnvironmentLedger([])
+      }
+
       // Pre-fill user modifications with initial requirements
       if (prompt) {
         setUserModifications(prompt)
@@ -641,7 +665,7 @@ export default function RemixPage() {
     setDisplayStep("script")
   }
 
-  const handleScriptConfirm = async (editedScript: string, materials: { name: string; uploaded: boolean }[], generateWithoutMaterials: boolean) => {
+  const handleScriptConfirm = async () => {
     // After script confirmation, go to character/scene views step
     setCompletedSteps(["analysis", "script"])
     
@@ -871,6 +895,9 @@ export default function RemixPage() {
     setRealStoryboard(null)
     setGenerationProgress({ stage: "idle", currentShot: 0, totalShots: 0, message: "" })
     setGeneratedVideoUrl(null)
+    // Reset Character Ledger
+    setCharacterLedger([])
+    setEnvironmentLedger([])
   }
 
   const showStepIndicator = step !== "upload"
@@ -1032,6 +1059,15 @@ export default function RemixPage() {
                 <StoryThemeTable data={analysisResult.storyTheme} />
                 <ScriptAnalysisTable data={analysisResult.scriptAnalysis} />
                 <StoryboardTable data={analysisResult.storyboard} />
+
+                {/* Character & Environment Inventory */}
+                {currentJobId && (characterLedger.length > 0 || environmentLedger.length > 0) && (
+                  <CharacterInventoryTable
+                    jobId={currentJobId}
+                    characters={characterLedger}
+                    environments={environmentLedger}
+                  />
+                )}
 
                 {/* User Modification Input */}
                 <Card className="bg-card border-border">

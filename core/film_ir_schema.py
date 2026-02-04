@@ -307,6 +307,7 @@ class ShotRecipeItem(TypedDict):
     startTime: str
     endTime: str
     durationSeconds: float
+    representativeTimestamp: Optional[float]  # 🎯 AI 语义锚点 - 代表帧时间戳 (秒)
     longTake: bool  # 是否为长镜头 (>5s)
 
     # 核心字段
@@ -470,40 +471,166 @@ class RenderStrategyPillar(TypedDict):
 
 
 # ============================================================
-# 用户意图
+# 用户意图 (M4: Intent Injection)
 # ============================================================
 
-class SubjectChange(TypedDict):
-    """主体变更"""
-    fromSubject: str
-    toSubject: str
-    attributes: Dict[str, str]
+class SubjectMapping(TypedDict):
+    """主体映射 - 1:1 或 1:N 替换"""
+    fromPlaceholder: str  # [PROTAGONIST_A], [SUBJECT], etc.
+    fromDescription: str  # 原始主体描述
+    toDescription: str  # 新主体详细描述 (50-80 words)
+    persistentAttributes: List[str]  # 持久属性 (红色披风, 金属外壳)
+    imageReference: Optional[str]  # 参考图片路径
+    affectedShots: List[str]  # ["all"] 或 ["shot_01", "shot_05"]
 
 
-class StyleChanges(TypedDict):
-    """风格变更"""
-    globalStyle: Optional[str]
-    colorShift: Optional[str]
+class EnvironmentMapping(TypedDict):
+    """环境映射"""
+    fromPlaceholder: str  # [SETTING]
+    fromDescription: str  # 原始环境
+    toDescription: str  # 新环境详细描述 (50-80 words)
+    timeOfDay: str  # dawn | day | dusk | night | unchanged
+    weather: str  # clear | rainy | snowy | foggy | unchanged
+    affectedShots: List[str]
 
 
-class NarrativeChanges(TypedDict):
-    """叙事变更"""
-    toneShift: Optional[str]
-    pacingAdjustment: Optional[str]
+class StyleInstruction(TypedDict):
+    """风格指令"""
+    artStyle: Optional[str]  # LEGO, 赛博朋克, 水彩
+    materialImplications: str  # 材质/纹理描述
+    lightingImplications: str  # 光影设置
+    colorPalette: Optional[str]
+
+
+class MoodTone(TypedDict):
+    """情绪基调"""
+    originalMood: str
+    targetMood: str
+    intensityShift: str  # increase | decrease | maintain
+    genreShift: Optional[str]
+
+
+class PlotRestructure(TypedDict):
+    """剧情重构"""
+    enabled: bool
+    themePreserved: bool
+    newConflict: Optional[str]
+    newClimax: Optional[str]
+    newResolution: Optional[str]
+    narrativeNotes: str
+
+
+class PreservedElements(TypedDict):
+    """保留元素"""
+    beatTagsPreserved: bool
+    cameraPreserved: bool
+    rhythmPreserved: bool
+    overrideReason: Optional[str]
+
+
+class ComplianceCheck(TypedDict):
+    """合规检查"""
+    passedSafetyCheck: bool
+    flaggedContent: List[str]
+    aspectRatioLocked: str  # 16:9
 
 
 class ParsedIntent(TypedDict):
-    """解析后的意图"""
-    subjectChanges: List[SubjectChange]
-    styleChanges: StyleChanges
-    narrativeChanges: NarrativeChanges
+    """解析后的意图 - M4 Intent Parser 输出"""
+    parseSuccess: bool
+    intentType: str  # ELEMENT_SWAP | STYLE_TRANSFER | PLOT_RESTRUCTURE | HYBRID
+    scope: str  # GLOBAL | PARTIAL | SINGLE_ELEMENT
+
+    subjectMapping: List[SubjectMapping]
+    environmentMapping: List[EnvironmentMapping]
+    styleInstruction: StyleInstruction
+    moodTone: MoodTone
+    plotRestructure: PlotRestructure
+    preservedElements: PreservedElements
+    complianceCheck: ComplianceCheck
+
+    parsingConfidence: float
+    ambiguities: List[str]
+
+
+# ============================================================
+# Remixed Identity Anchors (M4: Fusion 输出)
+# ============================================================
+
+class RemixedCharacterAnchor(TypedDict):
+    """Remixed 角色锚点 - Stage 4 资产生成的唯一文本源"""
+    anchorId: str  # char_01, char_02
+    originalPlaceholder: str  # [PROTAGONIST_A]
+    anchorName: str  # 人类可读名称
+    detailedDescription: str  # 80-120 字极致细节描述
+    persistentAttributes: List[str]
+    imageReference: Optional[str]
+    styleAdaptation: str  # 在目标风格下的外观
+
+
+class RemixedEnvironmentAnchor(TypedDict):
+    """Remixed 环境锚点"""
+    anchorId: str  # env_01, env_02
+    originalPlaceholder: str  # [SETTING]
+    anchorName: str
+    detailedDescription: str  # 80-120 字极致细节描述
+    atmosphericConditions: str  # 光照/天气/时间
+    styleAdaptation: str
+
+
+class RemixedIdentityAnchors(TypedDict):
+    """Remixed 身份锚点集合"""
+    characters: List[RemixedCharacterAnchor]
+    environments: List[RemixedEnvironmentAnchor]
+
+
+# ============================================================
+# Remixed Shot (M4: Fusion 输出)
+# ============================================================
+
+class RemixedShot(TypedDict):
+    """Remixed 分镜 - 包含 T2I 和 I2V prompts"""
+    shotId: str
+    beatTag: str
+    startTime: str
+    endTime: str
+    durationSeconds: float
+
+    cameraPreserved: ShotCinematography  # 保留的摄影骨架
+
+    T2I_FirstFrame: str  # Imagen 4.0 首帧生成 prompt (以 --ar 16:9 结尾)
+    I2V_VideoGen: str  # Veo 3.1 视频生成 prompt (包含首帧继承条款)
+
+    remixNotes: str  # 改动说明
+    appliedAnchors: Dict[str, List[str]]  # {characters: [], environments: []}
+
+
+class RemixedSummary(TypedDict):
+    """Remix 摘要"""
+    totalShots: int
+    shotsModified: int
+    primaryChanges: List[str]
+    styleApplied: str
+    moodShift: str
+    preservedElements: List[str]
+
+
+class RemixedLayer(TypedDict):
+    """Remixed 层 - 存储融合结果"""
+    identityAnchors: RemixedIdentityAnchors
+    shots: List[RemixedShot]
+    summary: RemixedSummary
+    fusionTimestamp: str
+    fusionSuccess: bool
 
 
 class UserIntent(TypedDict):
-    """用户意图"""
-    rawPrompt: Optional[str]
-    parsedIntent: Optional[ParsedIntent]
-    injectedAt: Optional[str]
+    """用户意图 - M4 完整结构"""
+    rawPrompt: Optional[str]  # 用户原始输入
+    referenceImages: List[str]  # 参考图片路径列表
+    parsedIntent: Optional[ParsedIntent]  # 解析后的结构化意图
+    remixedLayer: Optional[RemixedLayer]  # 融合后的 remixed 数据
+    injectedAt: Optional[str]  # ISO timestamp
 
 
 # ============================================================
@@ -635,8 +762,11 @@ def create_empty_film_ir(job_id: str, source_video: str = "") -> Dict[str, Any]:
 
         "userIntent": {
             "rawPrompt": None,
+            "referenceImages": [],
             "parsedIntent": None,
-            "injectedAt": None
+            "remixedLayer": None,
+            "injectedAt": None,
+            "intentHistory": []  # 多轮意图修改历史记录
         },
 
         "metaPromptsRegistry": {

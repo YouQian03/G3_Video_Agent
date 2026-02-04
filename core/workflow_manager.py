@@ -235,11 +235,91 @@ class WorkflowManager:
             result = ir_manager.run_stage("specificAnalysis")
             if result.get("status") == "success":
                 print(f"✅ [Film IR] Story Theme analysis completed")
+                # 🎯 关键：Film IR 分析完成后，根据 representativeTimestamp 重新提取帧
+                self._reextract_frames_from_film_ir(final_video_path)
             else:
                 print(f"⚠️ [Film IR] Story Theme analysis: {result.get('reason', 'unknown error')}")
         except Exception as e:
             print(f"⚠️ [Film IR] Story Theme analysis failed: {e}")
             # 不阻塞主流程，继续执行
+
+    def _reextract_frames_from_film_ir(self, video_path: Path):
+        """
+        🎯 根据 Film IR 的 representativeTimestamp 重新提取帧
+        这是在 Film IR 分析完成后调用的，用于修正初始帧提取的时间偏差
+
+        物理对位法：
+        1. 短镜头规则（duration < 2s）：强制使用 endTime - 0.2
+        2. 偏差保护：safe_ts = max(rep_ts, startTime + 1.2)
+        3. 边界保护：min(safe_ts, endTime - 0.1)
+        """
+        try:
+            ir = load_film_ir(self.job_dir)
+            if not ir:
+                print(f"⚠️ [Frame Re-extract] Film IR not found, skipping")
+                return
+
+            # 获取 concrete shots
+            shots = ir.get("pillars", {}).get("III_shotRecipe", {}).get("concrete", {}).get("shots", [])
+            if not shots:
+                print(f"⚠️ [Frame Re-extract] No shots in Film IR, skipping")
+                return
+
+            ffmpeg_path = get_ffmpeg_path()
+            frames_dir = self.job_dir / "frames"
+            reextracted_count = 0
+
+            for shot in shots:
+                shot_id = shot.get("shotId", "shot_01")
+                rep_ts = shot.get("representativeTimestamp")
+                start_time = shot.get("startTime", "00:00:00.000")
+                end_time = shot.get("endTime", "00:00:00.000")
+
+                # 转换时间格式
+                start_sec = to_seconds(start_time) or 0
+                end_sec = to_seconds(end_time) or start_sec + 1
+                duration = end_sec - start_sec
+
+                extract_ts = None
+
+                # 🎯 规则 1：短镜头强制规则（duration < 2s）
+                # 对于快切视频，直接使用 endTime - 0.2，这是确保场景转换完成的唯一方法
+                if duration < 2.0:
+                    extract_ts = end_sec - 0.2
+                    print(f"⚡ [Re-extract] {shot_id}: 短镜头规则 {extract_ts:.2f}s (endTime - 0.2, duration={duration:.2f}s)")
+
+                # 🎯 规则 2：正常镜头 - AI 锚点 + 偏差保护
+                elif rep_ts is not None:
+                    # 偏差保护：确保至少在 startTime + 1.2s 之后
+                    safe_ts = max(rep_ts, start_sec + 1.2)
+                    # 边界保护：确保不超出镜头范围
+                    extract_ts = min(safe_ts, end_sec - 0.1)
+                    if safe_ts != rep_ts:
+                        print(f"🛡️ [Re-extract] {shot_id}: 偏差保护 {extract_ts:.2f}s (AI给{rep_ts:.2f}s, 修正到startTime+1.2)")
+                    else:
+                        print(f"🎯 [Re-extract] {shot_id}: AI 语义锚点 {extract_ts:.2f}s")
+
+                # 🎯 规则 3：保底逻辑
+                if extract_ts is None:
+                    extract_ts = start_sec + (duration * 0.8)
+                    print(f"📐 [Re-extract] {shot_id}: 数学保底 {extract_ts:.2f}s (80% 位置)")
+
+                # 重新提取帧
+                frame_path = frames_dir / f"{shot_id}.png"
+                subprocess.run([
+                    ffmpeg_path, "-y",
+                    "-i", str(video_path),
+                    "-ss", str(extract_ts),
+                    "-frames:v", "1",
+                    "-q:v", "2",
+                    str(frame_path)
+                ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                reextracted_count += 1
+
+            print(f"✅ [Frame Re-extract] 已根据物理对位法重新提取 {reextracted_count} 帧")
+
+        except Exception as e:
+            print(f"⚠️ [Frame Re-extract] Failed: {e}")
 
     def _infer_beat_tag(self, shot_num: int, total_shots: int) -> str:
         """推断分镜的节拍标签"""
@@ -332,6 +412,27 @@ class WorkflowManager:
                 print(f"📊 语义分析：无需合并，保留 {len(shots)} 个分镜")
                 return shots
 
+            # 🛡️ 防止过度合并：检查合并后是否会少于2个镜头
+            total_merged = sum(len(g) - 1 for g in merge_groups if isinstance(g, list) and len(g) > 1)
+            result_count = len(shots) - total_merged
+            if result_count < 2:
+                print(f"⚠️ 合并后只剩 {result_count} 个分镜，取消合并以保留原始分镜结构")
+                return shots
+
+            # 🛡️ 防止单组过度合并：如果单个合并组超过3个镜头，拆分或跳过
+            safe_merge_groups = []
+            for group in merge_groups:
+                if isinstance(group, list) and len(group) > 1:
+                    if len(group) > 3:
+                        print(f"⚠️ 合并组 {group} 过大（{len(group)}个镜头），跳过此合并")
+                        continue
+                    safe_merge_groups.append(group)
+            merge_groups = safe_merge_groups
+
+            if not merge_groups:
+                print(f"📊 所有合并组被过滤，保留原始 {len(shots)} 个分镜")
+                return shots
+
             # 执行合并
             merged_indices = set()
             for group in merge_groups:
@@ -389,7 +490,7 @@ class WorkflowManager:
     def _run_ffmpeg_extraction(self, video_path: Path, storyboard: List):
         """
         毫秒级精准提取：
-        - 关键帧提取：从分镜中点提取，确保画面与描述一致
+        - 关键帧提取：优先使用 AI 语义锚点 (representativeTimestamp)，保底使用数学逻辑
         - 视频片段：使用精准切割模式
         """
         ffmpeg_path = get_ffmpeg_path()
@@ -399,14 +500,33 @@ class WorkflowManager:
             duration = end_ts - ts
             sid = f"shot_{int(s['shot_number']):02d}"
 
-            # 🎯 关键帧提取：从分镜的**中点**提取，而非起始点
-            # 原因：起始点可能是转场瞬间，中点才是该分镜的代表性画面
-            mid_ts = ts + (duration / 2.0)
+            # 🎯 关键帧提取：AI 语义锚点 + 数学保底
+            # 优先级：representativeTimestamp > startTime + duration * 0.8
+            extract_ts = None
+            extraction_method = "fallback"
+
+            # 首选：AI 提供的代表帧时间戳
+            rep_ts = s.get("representativeTimestamp") or s.get("representative_timestamp")
+            if rep_ts is not None:
+                rep_ts = to_seconds(rep_ts)
+                # 校验：时间戳必须在 [startTime + 0.1, endTime - 0.1] 范围内
+                min_valid = ts + 0.1
+                max_valid = end_ts - 0.1
+                if rep_ts is not None and min_valid <= rep_ts <= max_valid:
+                    extract_ts = rep_ts
+                    extraction_method = "ai_anchor"
+                    print(f"🎯 {sid}: 使用 AI 语义锚点 {extract_ts:.2f}s")
+
+            # 保底：数学修正 (startTime + duration * 0.8)
+            if extract_ts is None:
+                extract_ts = ts + (duration * 0.8)
+                print(f"📐 {sid}: 使用数学保底 {extract_ts:.2f}s (80% 位置)")
+
             img_out = self.job_dir / "frames" / f"{sid}.png"
             subprocess.run([
                 ffmpeg_path, "-y",
                 "-i", str(video_path),
-                "-ss", str(mid_ts),       # 从中点提取，确保画面与描述一致
+                "-ss", str(extract_ts),
                 "-frames:v", "1",
                 "-q:v", "2",
                 str(img_out)

@@ -7,15 +7,8 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter }
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Textarea } from "@/components/ui/textarea"
-import { Checkbox } from "@/components/ui/checkbox"
-import { Check, Edit3, Sparkles, FileText, Package, Upload, Wand2, RefreshCw, ImagePlus, X } from "lucide-react"
+import { Check, Edit3, Sparkles, FileText, RefreshCw, ImagePlus, X } from "lucide-react"
 import type { GeneratedScript } from "@/lib/types/remix"
-
-interface MaterialItem {
-  name: string
-  uploaded: boolean
-  file?: File
-}
 
 interface ReferenceImage {
   file: File
@@ -26,16 +19,16 @@ interface GeneratedScriptProps {
   data: GeneratedScript
   userRequirements: string
   initialReferenceImages?: File[]
-  onConfirm: (editedScript: string, materials: MaterialItem[], generateWithoutMaterials: boolean) => void
+  onConfirm: () => void
   onRegenerate?: (newRequirements: string, referenceImages: File[]) => void
 }
 
-export function GeneratedScriptCard({ 
-  data, 
-  userRequirements, 
+export function GeneratedScriptCard({
+  data,
+  userRequirements,
   initialReferenceImages = [],
   onConfirm,
-  onRegenerate 
+  onRegenerate
 }: GeneratedScriptProps) {
   const [isEditing, setIsEditing] = useState(false)
   const [isConfirmed, setIsConfirmed] = useState(false)
@@ -45,10 +38,6 @@ export function GeneratedScriptCard({
   const [referenceImages, setReferenceImages] = useState<ReferenceImage[]>(
     initialReferenceImages.map((file) => ({ file, preview: URL.createObjectURL(file) }))
   )
-  const [materials, setMaterials] = useState<MaterialItem[]>(
-    data.missingMaterials.map((name) => ({ name, uploaded: false }))
-  )
-  const fileInputRefs = useRef<{ [key: number]: HTMLInputElement | null }>({})
   const refImageInputRef = useRef<HTMLInputElement>(null)
 
   const handleModify = () => {
@@ -58,24 +47,8 @@ export function GeneratedScriptCard({
   const handleConfirmScript = () => {
     setIsEditing(false)
     setIsConfirmed(true)
-  }
-
-  const handleMaterialUpload = (index: number, file: File | null) => {
-    setMaterials((prev) =>
-      prev.map((item, i) =>
-        i === index ? { ...item, uploaded: !!file, file: file || undefined } : item
-      )
-    )
-  }
-
-  const handleMaterialCheck = (index: number, checked: boolean) => {
-    if (!checked) {
-      setMaterials((prev) =>
-        prev.map((item, i) =>
-          i === index ? { ...item, uploaded: false, file: undefined } : item
-        )
-      )
-    }
+    // Notify parent that script is confirmed
+    onConfirm()
   }
 
   const handleAddReferenceImage = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -104,16 +77,6 @@ export function GeneratedScriptCard({
     if (onRegenerate) {
       onRegenerate(editedRequirements, referenceImages.map((r) => r.file))
     }
-  }
-
-  const allMaterialsUploaded = materials.every((m) => m.uploaded)
-
-  const handleProceedWithMaterials = () => {
-    onConfirm(scriptContent, materials, false)
-  }
-
-  const handleGenerateWithoutMaterials = () => {
-    onConfirm(scriptContent, materials, true)
   }
 
   return (
@@ -148,7 +111,7 @@ export function GeneratedScriptCard({
                 rows={4}
                 className="resize-none bg-secondary border-border"
               />
-              
+
               {/* Reference Images for regeneration */}
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
@@ -240,17 +203,17 @@ export function GeneratedScriptCard({
               <FileText className="w-5 h-5 text-accent" />
               <CardTitle className="text-foreground">Generated Remix Script</CardTitle>
             </div>
-            <Badge 
-              variant="outline" 
+            <Badge
+              variant="outline"
               className={isConfirmed ? "border-accent bg-accent text-accent-foreground" : "border-accent text-accent"}
             >
               {isConfirmed ? "Confirmed" : "Awaiting Confirmation"}
             </Badge>
           </div>
           <CardDescription className="text-muted-foreground">
-            {isConfirmed 
-              ? "Script confirmed. Now upload materials or proceed to generate storyboard."
-              : isEditing 
+            {isConfirmed
+              ? "Script confirmed. Proceed to Character & Scene Views to prepare assets."
+              : isEditing
               ? "Edit the script below, then confirm when ready."
               : "Review the script below. Click Modify to make changes, or Confirm to proceed."}
           </CardDescription>
@@ -293,87 +256,6 @@ export function GeneratedScriptCard({
           </CardFooter>
         )}
       </Card>
-
-      {/* Missing Materials Card - Only show after script is confirmed */}
-      {isConfirmed && materials.length > 0 && (
-        <Card className="bg-yellow-500/5 border-yellow-500/30">
-          <CardHeader className="pb-3">
-            <div className="flex items-center gap-2">
-              <Package className="w-5 h-5 text-yellow-500" />
-              <CardTitle className="text-base text-yellow-500">Missing Materials</CardTitle>
-            </div>
-            <CardDescription className="text-yellow-500/70">
-              Upload the materials below to include them in your remix, or generate without them.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            {materials.map((material, index) => (
-              <div
-                key={index}
-                className="flex items-center gap-3 p-3 bg-yellow-500/10 rounded-lg"
-              >
-                <Checkbox
-                  checked={material.uploaded}
-                  onCheckedChange={(checked) => handleMaterialCheck(index, checked as boolean)}
-                  className="border-yellow-500 data-[state=checked]:bg-accent data-[state=checked]:border-accent"
-                />
-                <span className={`flex-1 text-sm ${material.uploaded ? 'text-accent line-through' : 'text-yellow-500/90'}`}>
-                  {material.name}
-                </span>
-                <input
-                  type="file"
-                  ref={(el) => { fileInputRefs.current[index] = el }}
-                  className="hidden"
-                  onChange={(e) => handleMaterialUpload(index, e.target.files?.[0] || null)}
-                />
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => fileInputRefs.current[index]?.click()}
-                  className={`border-yellow-500/50 hover:bg-yellow-500/20 ${material.uploaded ? 'bg-accent/20 border-accent text-accent' : 'text-yellow-500'} bg-transparent`}
-                >
-                  <Upload className="w-3 h-3 mr-1" />
-                  {material.uploaded ? 'Replace' : 'Upload'}
-                </Button>
-              </div>
-            ))}
-          </CardContent>
-          <CardFooter className="flex flex-col sm:flex-row gap-3 pt-4">
-            {allMaterialsUploaded ? (
-              <Button
-                onClick={handleProceedWithMaterials}
-                className="w-full bg-accent text-accent-foreground hover:bg-accent/90"
-                size="lg"
-              >
-                <Check className="w-4 h-4 mr-2" />
-                Proceed with Materials
-              </Button>
-            ) : (
-              <>
-                <Button
-                  onClick={handleGenerateWithoutMaterials}
-                  variant="outline"
-                  className="flex-1 border-accent text-accent hover:bg-accent/10 bg-transparent"
-                  size="lg"
-                >
-                  <Wand2 className="w-4 h-4 mr-2" />
-                  Generate Without Materials
-                </Button>
-                {materials.some((m) => m.uploaded) && (
-                  <Button
-                    onClick={handleProceedWithMaterials}
-                    className="flex-1 bg-accent text-accent-foreground hover:bg-accent/90"
-                    size="lg"
-                  >
-                    <Check className="w-4 h-4 mr-2" />
-                    Proceed with Uploaded
-                  </Button>
-                )}
-              </>
-            )}
-          </CardFooter>
-        </Card>
-      )}
     </div>
   )
 }

@@ -7,13 +7,15 @@ import { SimpleVideoUpload } from "@/components/simple-video-upload"
 import { StoryThemeTable } from "@/components/remix/story-theme-table"
 import { ScriptAnalysisTable } from "@/components/remix/script-analysis-table"
 import { StoryboardTable } from "@/components/remix/storyboard-table"
+import { CharacterInventoryTable } from "@/components/remix/character-inventory-table"
 import { Loader2, Download, CheckCircle, FileJson, FolderOpen, Video, Play, AlertCircle } from "lucide-react"
 import { SaveToLibraryDialog } from "@/components/save-to-library-dialog"
 import type { RemixAnalysisResult, StoryboardShot } from "@/lib/types/remix"
 import { saveStoryboardToLibrary } from "@/lib/asset-storage"
 
 // 🔌 Real API Integration
-import { uploadVideo, getStoryboard, getStoryTheme, getScriptAnalysis, getAssetUrl } from "@/lib/api"
+import { uploadVideo, getStoryboard, getStoryTheme, getScriptAnalysis, getAssetUrl, getCharacterLedger } from "@/lib/api"
+import type { CharacterEntity, EnvironmentEntity } from "@/lib/api"
 
 type AnalysisStep = "upload" | "analyzing" | "results"
 
@@ -222,6 +224,10 @@ export default function StoryboardAnalysisPage() {
   const [apiError, setApiError] = useState<string | null>(null)
   const [sourceVideoFilename, setSourceVideoFilename] = useState<string | null>(null)
 
+  // Character Ledger State
+  const [characterLedger, setCharacterLedger] = useState<CharacterEntity[]>([])
+  const [environmentLedger, setEnvironmentLedger] = useState<EnvironmentEntity[]>([])
+
   const handleVideoSubmit = async (files: File[]) => {
     setUploadedFiles(files)
     setApiError(null)
@@ -328,6 +334,18 @@ export default function StoryboardAnalysisPage() {
       // 保存源视频文件名用于后续构建 URL
       setSourceVideoFilename(storyboardData.sourceVideo || null)
 
+      // 🔌 Fetch Character Ledger
+      try {
+        const ledgerData = await getCharacterLedger(uploadResult.job_id)
+        setCharacterLedger(ledgerData.characterLedger || [])
+        setEnvironmentLedger(ledgerData.environmentLedger || [])
+        console.log("✅ Character Ledger received:", ledgerData.summary)
+      } catch (e) {
+        console.warn("Character Ledger not available:", e)
+        setCharacterLedger([])
+        setEnvironmentLedger([])
+      }
+
       setAnalysisResult(realAnalysisResult)
       setStep("results")
     } catch (error) {
@@ -373,6 +391,9 @@ export default function StoryboardAnalysisPage() {
     setCurrentJobId(null)
     setApiError(null)
     setSourceVideoFilename(null)
+    // Reset Character Ledger
+    setCharacterLedger([])
+    setEnvironmentLedger([])
   }
   
   const handleSaveToLibrary = (name: string, tags: string[]) => {
@@ -543,6 +564,15 @@ export default function StoryboardAnalysisPage() {
 
           {/* Storyboard Breakdown */}
           <StoryboardTable data={analysisResult.storyboard} />
+
+          {/* Character & Environment Inventory */}
+          {currentJobId && (characterLedger.length > 0 || environmentLedger.length > 0) && (
+            <CharacterInventoryTable
+              jobId={currentJobId}
+              characters={characterLedger}
+              environments={environmentLedger}
+            />
+          )}
 
           {/* Export & Save Section */}
           <Card className="bg-card border-border">

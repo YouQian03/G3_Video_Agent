@@ -1,0 +1,486 @@
+# core/asset_generator.py
+"""
+Asset Generator - Gemini 3 Pro Image 资产生成器
+
+使用 Gemini 3 Pro Image Preview 生成角色三视图和环境参考图。
+支持参考图片输入以保持角色一致性。
+"""
+
+import os
+import asyncio
+from pathlib import Path
+from typing import Dict, Any, Optional, List, Tuple
+from dataclasses import dataclass
+from enum import Enum
+from PIL import Image
+import io
+
+
+class AssetType(Enum):
+    """资产类型"""
+    CHARACTER_FRONT = "front"
+    CHARACTER_SIDE = "side"
+    CHARACTER_BACK = "back"
+    ENVIRONMENT = "reference"
+
+
+class AssetStatus(Enum):
+    """资产生成状态"""
+    NOT_STARTED = "NOT_STARTED"
+    GENERATING = "GENERATING"
+    SUCCESS = "SUCCESS"
+    FAILED = "FAILED"
+
+
+@dataclass
+class GeneratedAsset:
+    """生成的资产"""
+    anchor_id: str
+    asset_type: AssetType
+    file_path: Optional[str]
+    status: AssetStatus
+    error_message: Optional[str] = None
+
+
+class AssetGenerator:
+    """
+    Gemini 3 Pro Image 资产生成器
+
+    Features:
+    - 角色三视图生成（链式生成保持一致性）
+    - 环境参考图生成
+    - 支持用户参考图片输入
+    - 自动保存到 jobs/{job_id}/assets/
+    """
+
+    MODEL_NAME = "gemini-3-pro-image-preview"
+    DEFAULT_RESOLUTION = "2K"
+    ASPECT_RATIO = "16:9"
+
+    def __init__(self, job_id: str, project_root: str):
+        """
+        初始化资产生成器
+
+        Args:
+            job_id: 任务 ID
+            project_root: 项目根目录
+        """
+        self.job_id = job_id
+        self.project_root = Path(project_root)
+        self.assets_dir = self.project_root / "jobs" / job_id / "assets"
+        self.assets_dir.mkdir(parents=True, exist_ok=True)
+
+        # 初始化 Gemini 客户端
+        self._init_client()
+
+        # 生成状态追踪
+        self.generation_status: Dict[str, AssetStatus] = {}
+
+    def _init_client(self):
+        """初始化 Gemini 客户端"""
+        try:
+            from google import genai
+            from google.genai import types
+
+            api_key = os.environ.get("GEMINI_API_KEY")
+            if not api_key:
+                raise ValueError("GEMINI_API_KEY environment variable not set")
+
+            self.client = genai.Client(api_key=api_key)
+            self.types = types
+            print(f"✅ Gemini client initialized for asset generation")
+
+        except ImportError:
+            raise ImportError("Please install google-genai: pip install google-genai")
+
+    def _build_character_prompt(
+        self,
+        view: AssetType,
+        detailed_description: str,
+        anchor_name: str,
+        style_adaptation: str = "",
+        persistent_attributes: List[str] = None
+    ) -> str:
+        """
+        构建角色视图 prompt
+
+        Args:
+            view: 视图类型 (front/side/back)
+            detailed_description: 80-120字详细描述
+            anchor_name: 角色名称
+            style_adaptation: 风格适配说明
+            persistent_attributes: 持久属性列表
+        """
+        view_instructions = {
+            AssetType.CHARACTER_FRONT: "front facing view, looking directly at camera",
+            AssetType.CHARACTER_SIDE: "side profile view, facing left, same character as reference",
+            AssetType.CHARACTER_BACK: "back view, facing away from camera, same character as reference"
+        }
+
+        attributes_str = ""
+        if persistent_attributes:
+            attributes_str = f"Key visual features: {', '.join(persistent_attributes)}. "
+
+        style_str = ""
+        if style_adaptation:
+            style_str = f"Style: {style_adaptation}. "
+
+        prompt = f"""Cinematic character reference sheet, {view_instructions[view]}.
+
+Character: {anchor_name}
+{detailed_description}
+
+{attributes_str}{style_str}
+
+Technical requirements:
+- Clean white studio background
+- Professional three-point lighting
+- Same lighting setup across all views
+- High detail, sharp focus
+- Single character only, full body visible
+- No text, no watermarks, no logos
+- Consistent proportions and features
+- 16:9 widescreen composition with character centered
+"""
+        return prompt.strip()
+
+    def _build_environment_prompt(
+        self,
+        detailed_description: str,
+        anchor_name: str,
+        atmospheric_conditions: str = "",
+        style_adaptation: str = ""
+    ) -> str:
+        """
+        构建环境参考图 prompt
+
+        Args:
+            detailed_description: 80-120字详细描述
+            anchor_name: 环境名称
+            atmospheric_conditions: 大气条件（光照/天气/时间）
+            style_adaptation: 风格适配说明
+        """
+        atmosphere_str = ""
+        if atmospheric_conditions:
+            atmosphere_str = f"Lighting and atmosphere: {atmospheric_conditions}. "
+
+        style_str = ""
+        if style_adaptation:
+            style_str = f"Style: {style_adaptation}. "
+
+        prompt = f"""Cinematic environment establishing shot, wide angle composition.
+
+Location: {anchor_name}
+{detailed_description}
+
+{atmosphere_str}{style_str}
+
+Technical requirements:
+- Wide angle lens perspective
+- Rich environmental detail
+- Cinematic color grading
+- High detail, sharp focus throughout
+- No people, no characters
+- No text, no watermarks, no logos
+- 16:9 widescreen composition
+- Suitable as background reference for video production
+"""
+        return prompt.strip()
+
+    async def _generate_image(
+        self,
+        prompt: str,
+        reference_images: List[Image.Image] = None
+    ) -> Tuple[Optional[Image.Image], Optional[str]]:
+        """
+        调用 Gemini API 生成图片
+
+        Args:
+            prompt: 生成 prompt
+            reference_images: 参考图片列表
+
+        Returns:
+            (生成的图片, 错误信息)
+        """
+        try:
+            # 构建 contents
+            contents = [prompt]
+            if reference_images:
+                for ref_img in reference_images:
+                    contents.append(ref_img)
+
+            # 配置生成参数
+            config = self.types.GenerateContentConfig(
+                response_modalities=['IMAGE'],
+            )
+
+            # 调用 API
+            response = self.client.models.generate_content(
+                model=self.MODEL_NAME,
+                contents=contents,
+                config=config
+            )
+
+            # 提取生成的图片
+            for part in response.candidates[0].content.parts:
+                if hasattr(part, 'inline_data') and part.inline_data is not None:
+                    # 从 bytes 创建 PIL Image
+                    image_data = part.inline_data.data
+                    image = Image.open(io.BytesIO(image_data))
+                    return image, None
+
+            return None, "No image generated in response"
+
+        except Exception as e:
+            return None, str(e)
+
+    def _generate_image_sync(
+        self,
+        prompt: str,
+        reference_images: List[Image.Image] = None
+    ) -> Tuple[Optional[Image.Image], Optional[str]]:
+        """
+        同步版本的图片生成
+        """
+        try:
+            # 构建 contents
+            contents = [prompt]
+            if reference_images:
+                for ref_img in reference_images:
+                    contents.append(ref_img)
+
+            # 配置生成参数
+            config = self.types.GenerateContentConfig(
+                response_modalities=['IMAGE'],
+            )
+
+            # 调用 API
+            response = self.client.models.generate_content(
+                model=self.MODEL_NAME,
+                contents=contents,
+                config=config
+            )
+
+            # 提取生成的图片
+            for part in response.candidates[0].content.parts:
+                if hasattr(part, 'inline_data') and part.inline_data is not None:
+                    image_data = part.inline_data.data
+                    image = Image.open(io.BytesIO(image_data))
+                    return image, None
+
+            return None, "No image generated in response"
+
+        except Exception as e:
+            return None, str(e)
+
+    def generate_character_assets(
+        self,
+        anchor_id: str,
+        anchor_name: str,
+        detailed_description: str,
+        style_adaptation: str = "",
+        persistent_attributes: List[str] = None,
+        user_reference_path: str = None,
+        on_progress: callable = None
+    ) -> Dict[str, GeneratedAsset]:
+        """
+        生成角色三视图资产（链式生成）
+
+        Args:
+            anchor_id: 锚点 ID (如 char_01)
+            anchor_name: 角色名称
+            detailed_description: 详细描述
+            style_adaptation: 风格适配
+            persistent_attributes: 持久属性
+            user_reference_path: 用户上传的参考图路径
+            on_progress: 进度回调函数
+
+        Returns:
+            {view: GeneratedAsset} 三视图资产字典
+        """
+        results = {}
+        reference_images = []
+
+        # 加载用户参考图（如果有）
+        if user_reference_path and os.path.exists(user_reference_path):
+            try:
+                user_ref = Image.open(user_reference_path)
+                reference_images.append(user_ref)
+                print(f"   📷 Loaded user reference image: {user_reference_path}")
+            except Exception as e:
+                print(f"   ⚠️ Failed to load reference image: {e}")
+
+        # 生成三视图（链式生成）
+        views = [
+            AssetType.CHARACTER_FRONT,
+            AssetType.CHARACTER_SIDE,
+            AssetType.CHARACTER_BACK
+        ]
+
+        front_image = None  # 用于后续视图的参考
+
+        for i, view in enumerate(views):
+            view_name = view.value
+            self.generation_status[f"{anchor_id}_{view_name}"] = AssetStatus.GENERATING
+
+            if on_progress:
+                on_progress(anchor_id, view_name, "GENERATING")
+
+            print(f"   🎨 Generating {anchor_name} - {view_name} view ({i+1}/3)...")
+
+            # 构建 prompt
+            prompt = self._build_character_prompt(
+                view=view,
+                detailed_description=detailed_description,
+                anchor_name=anchor_name,
+                style_adaptation=style_adaptation,
+                persistent_attributes=persistent_attributes
+            )
+
+            # 准备参考图片
+            refs_for_this_view = reference_images.copy()
+            if front_image and view != AssetType.CHARACTER_FRONT:
+                # 对于侧面和背面，加入正面图作为参考
+                refs_for_this_view.append(front_image)
+
+            # 生成图片
+            image, error = self._generate_image_sync(prompt, refs_for_this_view)
+
+            if image and not error:
+                # 保存图片
+                file_name = f"{anchor_id}_{view_name}.png"
+                file_path = self.assets_dir / file_name
+                image.save(file_path, "PNG")
+
+                # 保存正面图供后续参考
+                if view == AssetType.CHARACTER_FRONT:
+                    front_image = image
+
+                results[view_name] = GeneratedAsset(
+                    anchor_id=anchor_id,
+                    asset_type=view,
+                    file_path=str(file_path),
+                    status=AssetStatus.SUCCESS
+                )
+                self.generation_status[f"{anchor_id}_{view_name}"] = AssetStatus.SUCCESS
+                print(f"   ✅ Saved: {file_path}")
+
+                if on_progress:
+                    on_progress(anchor_id, view_name, "SUCCESS", str(file_path))
+            else:
+                results[view_name] = GeneratedAsset(
+                    anchor_id=anchor_id,
+                    asset_type=view,
+                    file_path=None,
+                    status=AssetStatus.FAILED,
+                    error_message=error
+                )
+                self.generation_status[f"{anchor_id}_{view_name}"] = AssetStatus.FAILED
+                print(f"   ❌ Failed: {error}")
+
+                if on_progress:
+                    on_progress(anchor_id, view_name, "FAILED", None, error)
+
+        return results
+
+    def generate_environment_asset(
+        self,
+        anchor_id: str,
+        anchor_name: str,
+        detailed_description: str,
+        atmospheric_conditions: str = "",
+        style_adaptation: str = "",
+        on_progress: callable = None
+    ) -> GeneratedAsset:
+        """
+        生成环境参考图
+
+        Args:
+            anchor_id: 锚点 ID (如 env_01)
+            anchor_name: 环境名称
+            detailed_description: 详细描述
+            atmospheric_conditions: 大气条件
+            style_adaptation: 风格适配
+            on_progress: 进度回调
+
+        Returns:
+            GeneratedAsset
+        """
+        view_name = AssetType.ENVIRONMENT.value
+        self.generation_status[f"{anchor_id}_{view_name}"] = AssetStatus.GENERATING
+
+        if on_progress:
+            on_progress(anchor_id, view_name, "GENERATING")
+
+        print(f"   🏞️ Generating environment: {anchor_name}...")
+
+        # 构建 prompt
+        prompt = self._build_environment_prompt(
+            detailed_description=detailed_description,
+            anchor_name=anchor_name,
+            atmospheric_conditions=atmospheric_conditions,
+            style_adaptation=style_adaptation
+        )
+
+        # 生成图片（环境图不需要参考图）
+        image, error = self._generate_image_sync(prompt)
+
+        if image and not error:
+            file_name = f"{anchor_id}_{view_name}.png"
+            file_path = self.assets_dir / file_name
+            image.save(file_path, "PNG")
+
+            result = GeneratedAsset(
+                anchor_id=anchor_id,
+                asset_type=AssetType.ENVIRONMENT,
+                file_path=str(file_path),
+                status=AssetStatus.SUCCESS
+            )
+            self.generation_status[f"{anchor_id}_{view_name}"] = AssetStatus.SUCCESS
+            print(f"   ✅ Saved: {file_path}")
+
+            if on_progress:
+                on_progress(anchor_id, view_name, "SUCCESS", str(file_path))
+
+            return result
+        else:
+            result = GeneratedAsset(
+                anchor_id=anchor_id,
+                asset_type=AssetType.ENVIRONMENT,
+                file_path=None,
+                status=AssetStatus.FAILED,
+                error_message=error
+            )
+            self.generation_status[f"{anchor_id}_{view_name}"] = AssetStatus.FAILED
+            print(f"   ❌ Failed: {error}")
+
+            if on_progress:
+                on_progress(anchor_id, view_name, "FAILED", None, error)
+
+            return result
+
+    def get_generation_status(self) -> Dict[str, str]:
+        """获取所有资产的生成状态"""
+        return {k: v.value for k, v in self.generation_status.items()}
+
+    def get_asset_paths(self) -> Dict[str, Dict[str, str]]:
+        """
+        获取所有已生成资产的路径
+
+        Returns:
+            {anchor_id: {view: path}}
+        """
+        paths = {}
+
+        for file_path in self.assets_dir.glob("*.png"):
+            # 解析文件名: char_01_front.png -> anchor_id=char_01, view=front
+            parts = file_path.stem.rsplit("_", 1)
+            if len(parts) == 2:
+                anchor_id = parts[0]
+                view = parts[1]
+
+                if anchor_id not in paths:
+                    paths[anchor_id] = {}
+                paths[anchor_id][view] = str(file_path)
+
+        return paths

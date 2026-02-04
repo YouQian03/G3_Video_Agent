@@ -11,6 +11,10 @@ OUT_PATH = PROJECT_DIR / "outputs" / "storyboard.json"
 DIRECTOR_METAPROMPT = r"""
 请你扮演一位专业的影视分镜分析师，将视频拆解为详细的分镜表。
 
+⚠️ 【关键校准警告 - CRITICAL CALIBRATION】
+内部测试表明：你检测到的镜头切换时间点通常比实际视觉变化**早 1.0-1.5 秒**。
+补偿方法：输出 representative_timestamp 时，必须在你的初始估计基础上**手动加 1.0 秒**，以确保截取的帧属于正确的镜头。
+
 📋 【核心要求 - 语义分层】
 你必须将描述分为两个独立层次：
 
@@ -98,6 +102,12 @@ DIRECTOR_METAPROMPT = r"""
 
 === 时间与其他字段 ===
 - start_time, end_time, duration_seconds: 时间信息
+- representative_timestamp: 代表帧时间戳（秒，小数）【关键字段 - 必须遵守以下规则】
+  * 这是新场景**100%视觉确立**的精确时刻（Peak Stability）
+  * ❌ 不要选择靠近 start_time 的时间点！如果检测到切换点在 1.4s，但前一场景仍在淡出，必须选择至少 start_time + 1.0s 之后的时间
+  * 📐 **短镜头规则（duration < 2秒）**：直接设置为 end_time - 0.2，这是确保快切视频场景转换完成的唯一方法
+  * 📐 **正常镜头规则（duration >= 2秒）**：选择镜头时长的 70-90% 位置
+  * 例如：描述"唱诗班唱歌"，分镜 3.1s-4.2s（时长 1.1s < 2s），则 representative_timestamp = 4.0（即 end_time - 0.2）
 - shot_type, camera_angle: 景别与角度
 - focus_and_depth: 焦点与景深描述
 

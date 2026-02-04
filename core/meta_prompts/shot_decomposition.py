@@ -216,6 +216,7 @@ def convert_to_frontend_format(ai_output: dict) -> dict:
             "startTime": shot.get("startTime"),
             "endTime": shot.get("endTime"),
             "durationSeconds": shot.get("durationSeconds"),
+            "representativeTimestamp": shot.get("representativeTimestamp"),  # 🎯 AI 语义锚点
             "longTake": shot.get("longTake", False),
             # 8 核心字段
             "firstFrameDescription": concrete.get("firstFrameDescription", ""),
@@ -327,3 +328,274 @@ def extract_dialogue_timeline(ai_output: dict) -> List[dict]:
             })
 
     return dialogue_timeline
+
+
+# ============================================================
+# Two-Phase Shot Analysis (避免 JSON 截断)
+# ============================================================
+
+SHOT_DETECTION_PROMPT = """
+# Prompt: Lightweight Shot Detection (Phase 1)
+
+**Role**: Video Editor performing shot boundary detection.
+
+**Task**: Identify all shot boundaries in the video and extract basic metadata ONLY.
+Do NOT provide detailed descriptions - those will be extracted in Phase 2.
+
+## ⚠️ CRITICAL CALIBRATION WARNING ⚠️
+Internal testing shows your timestamp detection for scene cuts is consistently **1.0-1.5 seconds EARLIER** than the actual visual change.
+To compensate: When outputting `representativeTimestamp`, you MUST manually **ADD 1.0 seconds** to your initial visual estimate to ensure the captured frame belongs to the CORRECT shot.
+
+## Output Requirements
+- **CRITICAL**: Keep JSON compact. Only include fields specified below.
+- Maximum 30 shots per video
+- If cuts exceed 30, merge adjacent shots sharing same subject/scene
+
+## Representative Timestamp (CRITICAL - READ CAREFULLY)
+For each shot, you MUST provide a `representativeTimestamp` (in seconds as a decimal number).
+
+This must be the exact second where the new scene is **100% VISUALLY ESTABLISHED**.
+
+**RULES:**
+1. **DO NOT pick a point near the start boundary**. If you detect a cut at 1.4s but the previous scene is still fading out, you MUST pick a timestamp at least 1.0s AFTER your detected start time.
+2. **Look for "Peak Stability"**: The moment where the subject is fully in frame and motion blur is minimal.
+3. **FOR SHORT SHOTS (duration < 2 seconds)**: Set `representativeTimestamp` to exactly `endTime - 0.2`. This is the ONLY way to ensure the scene transition has completed for fast-cut videos.
+4. **FOR NORMAL SHOTS (duration >= 2 seconds)**: Pick a timestamp in the 70-90% range of the shot duration.
+
+Example: If you describe "A choir singing" for a shot from 3.14s to 4.27s (duration 1.13s < 2s), use `representativeTimestamp: 4.07` (which is endTime - 0.2)
+
+## Output Format (Strict JSON)
+
+{
+  "shotRecipe": {
+    "videoMetadata": {
+      "totalDuration": "00:01:23.456",
+      "totalShots": 18,
+      "averageShotDuration": 4.6
+    },
+    "globalSettings": {
+      "concrete": {
+        "visualStyle": "Brief visual style description",
+        "colorPalette": "Primary colors observed",
+        "lightingDesign": "General lighting approach"
+      },
+      "abstract": {
+        "styleCategory": "REALISTIC | STYLIZED | HYBRID",
+        "moodBoardTags": ["tag1", "tag2", "tag3"]
+      }
+    },
+    "shots": [
+      {
+        "shotId": "shot_01",
+        "beatTag": "HOOK | SETUP | CATALYST | RISING | TURN | CLIMAX | FALLING | RESOLUTION",
+        "startTime": "00:00:00.000",
+        "endTime": "00:00:03.200",
+        "durationSeconds": 3.2,
+        "representativeTimestamp": 2.1,
+        "longTake": false,
+        "briefSubject": "One-line subject description (10 words max)",
+        "briefScene": "One-line scene description (10 words max)"
+      }
+    ]
+  }
+}
+
+Output ONLY valid JSON. No markdown, no explanation.
+
+Analyze: {input_content}
+"""
+
+
+SHOT_DETAIL_BATCH_PROMPT = """
+# Prompt: Shot Detail Extraction (Phase 2 - Batch)
+
+**Role**: Master Cinematographer extracting detailed shot parameters.
+
+**Task**: For the shots listed below, provide FULL concrete and abstract details.
+You are analyzing shots {batch_start} to {batch_end} of {total_shots} total.
+
+## Shots to Analyze
+{shot_boundaries}
+
+## Output Format (Strict JSON)
+
+{
+  "batchInfo": {
+    "batchStart": {batch_start},
+    "batchEnd": {batch_end},
+    "processedCount": N
+  },
+  "shots": [
+    {
+      "shotId": "shot_XX",
+      "concrete": {
+        "firstFrameDescription": "CRITICAL: 50-80 word exact static composition of frame 1. Include: subject pose, facial expression, gaze direction, hand positions, body orientation, background elements, clothing details.",
+
+        "subject": "Full action description for motion. Include: character identity, physical state, intended motion trajectory, emotional undertone. (30-50 words)",
+
+        "scene": "Environment with temporal and atmospheric detail. (20-40 words)",
+
+        "camera": {
+          "shotSize": "ECU | CU | MCU | MS | MLS | LS | ELS | POV | OTS",
+          "cameraAngle": "Eye-level | Low-angle | High-angle | Dutch | Bird's-eye | Worm's-eye",
+          "cameraMovement": "Static | Pan L/R | Tilt U/D | Dolly In/Out | Track L/R | Crane | Handheld | Steadicam | Zoom",
+          "focalLengthDepth": "e.g., 85mm f/1.8, shallow DOF"
+        },
+
+        "lighting": "Technical lighting setup. (15-30 words)",
+
+        "dynamics": "Physics and secondary motion. (15-30 words)",
+
+        "audio": {
+          "soundDesign": "Ambient and SFX layers",
+          "music": "Score description",
+          "dialogue": "Speaker and delivery",
+          "dialogueText": "Exact transcription or empty string"
+        },
+
+        "style": "Rendering quality directives (15-25 words)",
+
+        "negative": "blurry, extra limbs, malformed hands, text, watermark, [add shot-specific exclusions]"
+      },
+      "abstract": {
+        "narrativeFunction": "Story purpose (10-20 words)",
+        "visualFunction": "Cinematic purpose (10-20 words)",
+        "subjectPlaceholder": "[PROTAGONIST_A] | [PROTAGONIST_B] | [ANTAGONIST] | [SUPPORTING_CHAR] | [ENVIRONMENT_ONLY]",
+        "actionTemplate": "Reusable motion template",
+        "cameraPreserved": "COPY of concrete.camera"
+      }
+    }
+  ]
+}
+
+Output ONLY valid JSON. No markdown, no explanation.
+
+Analyze the video focusing on the specified shots: {input_content}
+"""
+
+
+def create_shot_boundaries_text(shots_basic: List[dict], start_idx: int, end_idx: int) -> str:
+    """
+    创建批次 shot 边界描述文本
+
+    Args:
+        shots_basic: Phase 1 返回的基础 shot 列表
+        start_idx: 批次起始索引 (0-based)
+        end_idx: 批次结束索引 (exclusive)
+
+    Returns:
+        格式化的 shot 边界文本
+    """
+    lines = []
+    for shot in shots_basic[start_idx:end_idx]:
+        shot_id = shot.get("shotId", "unknown")
+        start_time = shot.get("startTime", "00:00:00.000")
+        end_time = shot.get("endTime", "00:00:00.000")
+        duration = shot.get("durationSeconds", 0)
+        brief_subject = shot.get("briefSubject", "")
+        brief_scene = shot.get("briefScene", "")
+
+        lines.append(f"- {shot_id}: {start_time} → {end_time} ({duration}s)")
+        lines.append(f"  Subject: {brief_subject}")
+        lines.append(f"  Scene: {brief_scene}")
+        lines.append("")
+
+    return "\n".join(lines)
+
+
+def merge_batch_results(
+    phase1_result: Dict[str, Any],
+    batch_results: List[Dict[str, Any]],
+    degraded_batches: List[Dict[str, Any]]
+) -> Dict[str, Any]:
+    """
+    合并 Phase 1 基础数据和 Phase 2 批次详情
+
+    Args:
+        phase1_result: Phase 1 返回的基础结构
+        batch_results: 成功的批次结果列表
+        degraded_batches: 降级的批次信息
+
+    Returns:
+        完整的 shot recipe 结构
+    """
+    recipe = phase1_result.get("shotRecipe", phase1_result)
+    shots_basic = recipe.get("shots", [])
+
+    # 创建 shotId -> detailed_shot 映射
+    detailed_shots_map = {}
+    for batch in batch_results:
+        for shot in batch.get("shots", []):
+            shot_id = shot.get("shotId")
+            if shot_id:
+                detailed_shots_map[shot_id] = shot
+
+    # 合并结果
+    merged_shots = []
+    for basic_shot in shots_basic:
+        shot_id = basic_shot.get("shotId")
+
+        if shot_id in detailed_shots_map:
+            # 使用详细数据
+            detailed = detailed_shots_map[shot_id]
+            merged_shot = {
+                "shotId": shot_id,
+                "beatTag": basic_shot.get("beatTag"),
+                "startTime": basic_shot.get("startTime"),
+                "endTime": basic_shot.get("endTime"),
+                "durationSeconds": basic_shot.get("durationSeconds"),
+                "representativeTimestamp": basic_shot.get("representativeTimestamp"),  # 🎯 AI 语义锚点
+                "longTake": basic_shot.get("longTake", False),
+                "concrete": detailed.get("concrete", {}),
+                "abstract": detailed.get("abstract", {}),
+                "_degraded": False
+            }
+        else:
+            # 使用降级数据 (Phase 1 基础信息)
+            merged_shot = {
+                "shotId": shot_id,
+                "beatTag": basic_shot.get("beatTag"),
+                "startTime": basic_shot.get("startTime"),
+                "endTime": basic_shot.get("endTime"),
+                "durationSeconds": basic_shot.get("durationSeconds"),
+                "representativeTimestamp": basic_shot.get("representativeTimestamp"),  # 🎯 AI 语义锚点
+                "longTake": basic_shot.get("longTake", False),
+                "concrete": {
+                    "firstFrameDescription": basic_shot.get("briefSubject", ""),
+                    "subject": basic_shot.get("briefSubject", ""),
+                    "scene": basic_shot.get("briefScene", ""),
+                    "camera": {},
+                    "lighting": "",
+                    "dynamics": "",
+                    "audio": {"soundDesign": "", "music": "", "dialogue": "", "dialogueText": ""},
+                    "style": "",
+                    "negative": "blurry, extra limbs, malformed hands, text, watermark"
+                },
+                "abstract": {
+                    "narrativeFunction": "",
+                    "visualFunction": "",
+                    "subjectPlaceholder": "[SUBJECT]",
+                    "actionTemplate": "",
+                    "cameraPreserved": {}
+                },
+                "_degraded": True
+            }
+
+        merged_shots.append(merged_shot)
+
+    # 构建最终结果
+    result = {
+        "shotRecipe": {
+            "videoMetadata": recipe.get("videoMetadata", {}),
+            "globalSettings": recipe.get("globalSettings", {}),
+            "shots": merged_shots,
+            "_analysisMetadata": {
+                "twoPhaseAnalysis": True,
+                "totalShots": len(merged_shots),
+                "degradedShots": sum(1 for s in merged_shots if s.get("_degraded")),
+                "degradedBatches": degraded_batches
+            }
+        }
+    }
+
+    return result
