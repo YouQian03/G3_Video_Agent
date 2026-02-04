@@ -36,9 +36,15 @@ import {
   runTask,
   getAssetUrl,
   getCharacterLedger,
+  triggerRemix,
+  pollRemixStatus,
+  getRemixDiff,
+  getRemixPrompts,
   type SocialSaverStoryboard,
   type CharacterEntity,
   type EnvironmentEntity,
+  type RemixDiffResponse,
+  type RemixPromptsResponse,
 } from "@/lib/api"
 
 // Step definitions - now with 5 steps including character/scene views
@@ -250,14 +256,95 @@ const generateModifiedAnalysis = (baseAnalysis: RemixAnalysisResult, requirement
   return baseAnalysis
 }
 
+// Convert Remix Diff + Prompts to a clean, user-friendly script
+const convertToCleanScript = (
+  diff: RemixDiffResponse,
+  prompts: RemixPromptsResponse,
+  userRequirements: string
+): GeneratedScript => {
+  const { summary, diff: shotDiffs } = diff
+  const { i2vPrompts, identityAnchors } = prompts
+
+  let scriptContent = `REMIX SCRIPT\n`
+  scriptContent += `${"=".repeat(50)}\n\n`
+
+  // User requirements
+  scriptContent += `📝 Remix Request: ${userRequirements}\n\n`
+
+  // Summary of changes
+  scriptContent += `📊 Summary\n`
+  scriptContent += `${"-".repeat(30)}\n`
+  scriptContent += `Total Shots: ${summary.totalShots} | Modified: ${summary.shotsModified}\n`
+  if (summary.primaryChanges && summary.primaryChanges.length > 0) {
+    scriptContent += `Changes: ${summary.primaryChanges.join(", ")}\n`
+  }
+  if (summary.preservedElements && summary.preservedElements.length > 0) {
+    scriptContent += `Preserved: ${summary.preservedElements.join(", ")}\n`
+  }
+  scriptContent += `\n`
+
+  // Character replacements (show once, briefly)
+  if (identityAnchors?.characters && identityAnchors.characters.length > 0) {
+    scriptContent += `🎭 Character Mapping\n`
+    scriptContent += `${"-".repeat(30)}\n`
+    identityAnchors.characters.forEach(char => {
+      // Show only a brief description (first sentence or first 100 chars)
+      const briefDesc = char.detailedDescription.split('.')[0] + '.'
+      scriptContent += `• ${char.anchorName}: ${briefDesc.length > 120 ? briefDesc.substring(0, 120) + '...' : briefDesc}\n`
+    })
+    scriptContent += `\n`
+  }
+
+  // Shot-by-shot breakdown (clean and simple)
+  scriptContent += `🎬 Shot Breakdown\n`
+  scriptContent += `${"=".repeat(50)}\n\n`
+
+  shotDiffs.forEach((shot, index) => {
+    const i2v = i2vPrompts.find(p => p.shotId === shot.shotId)
+    const duration = i2v ? `${i2v.durationSeconds}s` : ''
+    const camera = i2v ? `${i2v.cameraPreserved.shotSize} | ${i2v.cameraPreserved.cameraMovement}` : ''
+
+    scriptContent += `SHOT ${index + 1} ${duration ? `(${duration})` : ''} ${camera ? `- ${camera}` : ''}\n`
+    scriptContent += `${"-".repeat(40)}\n`
+
+    // Show the remix notes (this is the clean description)
+    if (shot.remixNotes) {
+      scriptContent += `${shot.remixNotes}\n`
+    }
+
+    // Show motion if available
+    if (i2v) {
+      // Extract just the action part from i2v prompt (remove boilerplate)
+      const motionDesc = i2v.prompt
+        .replace(/camera holds steady,?\s*/i, '')
+        .replace(/camera dollies out,?\s*/i, 'Dolly out: ')
+        .replace(/camera tracks L\/R,?\s*/i, 'Track: ')
+        .replace(/camera handheld,?\s*/i, 'Handheld: ')
+        .replace(/,?\s*maintaining exact composition.*$/i, '')
+        .replace(/,?\s*cinematic,?\s*[\d.]+s?$/i, '')
+        .trim()
+      if (motionDesc && motionDesc.length > 5) {
+        scriptContent += `Motion: ${motionDesc}\n`
+      }
+    }
+    scriptContent += `\n`
+  })
+
+  return {
+    content: scriptContent,
+    missingMaterials: [],
+  }
+}
+
+// Fallback mock script for when API is not available
 const generateMockScript = (requirements: string, referenceImages: File[]): GeneratedScript => {
-  const hasXiaobaiRequest = requirements.toLowerCase().includes("xiaobai") || 
+  const hasXiaobaiRequest = requirements.toLowerCase().includes("xiaobai") ||
                            requirements.includes("小白")
   const characterName = hasXiaobaiRequest ? "Xiaobai" : "Jack"
-  
+
   return {
     content: `REMIX SCRIPT: "Connection - ${characterName}'s Journey"
-  
+
 Based on your requirements${referenceImages.length > 0 ? ` and ${referenceImages.length} reference image(s)` : ''}, here is the proposed remix:
 
 CHARACTER: ${characterName} (${hasXiaobaiRequest ? 'renamed from Jack as requested' : 'original character'})
@@ -287,14 +374,7 @@ TOTAL DURATION: 60 seconds
 FORMAT: Vertical (9:16) for social media
 
 ${hasXiaobaiRequest ? '\nNOTE: All references to "Jack" will be replaced with "Xiaobai" in the final output.' : ''}`,
-    missingMaterials: [
-      "Text overlay graphics for opening",
-      "Motion graphics templates for character intro",
-      "Logo file for ending",
-      "Upbeat electronic music track (or approval to remix original)",
-      "Brand color palette for consistent grading",
-      ...(hasXiaobaiRequest ? ["Reference images/footage of Xiaobai character (if different appearance needed)"] : []),
-    ],
+    missingMaterials: [],
   }
 }
 
@@ -643,26 +723,106 @@ export default function RemixPage() {
 
   const handleGenerateScript = async () => {
     setStep("generating")
-    
-    // Simulate API call for script generation
-    await new Promise((resolve) => setTimeout(resolve, 2000))
-    
-    setGeneratedScript(generateMockScript(userModifications, referenceImages))
-    setStep("script")
-    setDisplayStep("script")
+    setApiError(null)
+
+    try {
+      if (!currentJobId) {
+        throw new Error("No job ID available. Please upload a video first.")
+      }
+
+      // 🔌 Real API: Trigger remix with user requirements
+      console.log("🎬 Triggering remix with prompt:", userModifications)
+      await triggerRemix(currentJobId, userModifications, [])
+
+      // Poll for remix completion
+      console.log("⏳ Polling remix status...")
+      await pollRemixStatus(
+        currentJobId,
+        (status) => {
+          console.log("📊 Remix status:", status.status)
+        },
+        2000, // poll every 2 seconds
+        60    // max 2 minutes
+      )
+
+      // Fetch both diff (for clean descriptions) and prompts (for character info)
+      console.log("📥 Fetching remix data...")
+      const [remixDiff, remixPrompts] = await Promise.all([
+        getRemixDiff(currentJobId),
+        getRemixPrompts(currentJobId)
+      ])
+      console.log("✅ Remix data received:", remixDiff.summary.totalShots, "shots")
+
+      // Convert to clean, user-friendly script
+      const script = convertToCleanScript(remixDiff, remixPrompts, userModifications)
+      setGeneratedScript(script)
+      setStep("script")
+      setDisplayStep("script")
+
+    } catch (error) {
+      console.error("❌ Remix generation error:", error)
+      const errorMessage = error instanceof Error ? error.message : "Remix generation failed"
+      setApiError(errorMessage)
+
+      // Fallback to mock if API fails (for development/testing)
+      console.log("⚠️ Falling back to mock script...")
+      setGeneratedScript(generateMockScript(userModifications, referenceImages))
+      setStep("script")
+      setDisplayStep("script")
+    }
   }
 
   const handleRegenerateScript = async (newRequirements: string, newRefImages: File[]) => {
     setUserModifications(newRequirements)
     setReferenceImages(newRefImages)
     setStep("generating")
-    
-    // Simulate API call for script regeneration
-    await new Promise((resolve) => setTimeout(resolve, 2000))
-    
-    setGeneratedScript(generateMockScript(newRequirements, newRefImages))
-    setStep("script")
-    setDisplayStep("script")
+    setApiError(null)
+
+    try {
+      if (!currentJobId) {
+        throw new Error("No job ID available. Please upload a video first.")
+      }
+
+      // 🔌 Real API: Trigger remix with new requirements
+      console.log("🔄 Regenerating remix with new prompt:", newRequirements)
+      await triggerRemix(currentJobId, newRequirements, [])
+
+      // Poll for remix completion
+      console.log("⏳ Polling remix status...")
+      await pollRemixStatus(
+        currentJobId,
+        (status) => {
+          console.log("📊 Remix status:", status.status)
+        },
+        2000,
+        60
+      )
+
+      // Fetch both diff and prompts
+      console.log("📥 Fetching remix data...")
+      const [remixDiff, remixPrompts] = await Promise.all([
+        getRemixDiff(currentJobId),
+        getRemixPrompts(currentJobId)
+      ])
+      console.log("✅ Remix data received:", remixDiff.summary.totalShots, "shots")
+
+      // Convert to clean, user-friendly script
+      const script = convertToCleanScript(remixDiff, remixPrompts, newRequirements)
+      setGeneratedScript(script)
+      setStep("script")
+      setDisplayStep("script")
+
+    } catch (error) {
+      console.error("❌ Remix regeneration error:", error)
+      const errorMessage = error instanceof Error ? error.message : "Remix regeneration failed"
+      setApiError(errorMessage)
+
+      // Fallback to mock if API fails
+      console.log("⚠️ Falling back to mock script...")
+      setGeneratedScript(generateMockScript(newRequirements, newRefImages))
+      setStep("script")
+      setDisplayStep("script")
+    }
   }
 
   const handleScriptConfirm = async () => {
