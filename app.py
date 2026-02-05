@@ -959,10 +959,89 @@ class UpdateDescriptionRequest(BaseModel):
     description: str
 
 
+def _find_entity_by_id(ir_manager: FilmIRManager, entity_id: str):
+    """
+    查找实体：优先从 identityAnchors 查找（anchorId），
+    如果找不到，再从 characterLedger/environmentLedger 查找（entityId）
+
+    Returns:
+        (entity_dict, entity_type, source) or (None, None, None)
+        source: "anchor" or "ledger"
+    """
+    identity_anchors = ir_manager.ir["pillars"]["IV_renderStrategy"]["identityAnchors"]
+
+    # 1. 先从 identityAnchors 中按 anchorId 查找
+    for char in identity_anchors.get("characters", []):
+        if char.get("anchorId") == entity_id:
+            return char, "character", "anchor"
+
+    for env in identity_anchors.get("environments", []):
+        if env.get("anchorId") == entity_id:
+            return env, "environment", "anchor"
+
+    # 2. 再从 characterLedger/environmentLedger 中按 entityId 查找
+    # 注意：characterLedger 在 II_narrativeTemplate 下
+    narrative_template = ir_manager.ir["pillars"].get("II_narrativeTemplate", {})
+
+    for char in narrative_template.get("characterLedger", []):
+        if char.get("entityId") == entity_id:
+            # 转换为 anchor 格式以便统一处理
+            anchor_format = {
+                "anchorId": char.get("entityId"),
+                "anchorName": char.get("displayName"),
+                "name": char.get("displayName"),
+                "detailedDescription": char.get("detailedDescription") or char.get("visualSignature", ""),
+                "threeViews": char.get("threeViews", {}),
+                "_source": "ledger"  # 标记来源
+            }
+            return anchor_format, "character", "ledger"
+
+    for env in narrative_template.get("environmentLedger", []):
+        if env.get("entityId") == entity_id:
+            # 转换为 anchor 格式以便统一处理
+            anchor_format = {
+                "anchorId": env.get("entityId"),
+                "anchorName": env.get("displayName"),
+                "name": env.get("displayName"),
+                "detailedDescription": env.get("detailedDescription") or env.get("visualSignature", ""),
+                "threeViews": env.get("threeViews", {}),
+                "_source": "ledger"
+            }
+            return anchor_format, "environment", "ledger"
+
+    return None, None, None
+
+
+def _save_entity_three_views(ir_manager: FilmIRManager, entity_id: str, entity_type: str, source: str, three_views: dict):
+    """
+    保存实体的三视图数据到正确的位置
+    """
+    if source == "anchor":
+        # 保存到 identityAnchors
+        identity_anchors = ir_manager.ir["pillars"]["IV_renderStrategy"]["identityAnchors"]
+        entity_list = identity_anchors.get("characters" if entity_type == "character" else "environments", [])
+        for entity in entity_list:
+            if entity.get("anchorId") == entity_id:
+                entity["threeViews"] = three_views
+                ir_manager.save()
+                return True
+    else:
+        # 保存到 characterLedger/environmentLedger (在 II_narrativeTemplate 下)
+        narrative_template = ir_manager.ir["pillars"].get("II_narrativeTemplate", {})
+        entity_list = narrative_template.get("characterLedger" if entity_type == "character" else "environmentLedger", [])
+        for entity in entity_list:
+            if entity.get("entityId") == entity_id:
+                entity["threeViews"] = three_views
+                ir_manager.save()
+                return True
+    return False
+
+
 @app.get("/api/job/{job_id}/entity/{anchor_id}")
 async def get_entity_state(job_id: str, anchor_id: str):
     """
     获取单个实体的完整状态（描述 + 三槽位）
+    支持通过 anchorId（identityAnchors）或 entityId（characterLedger）查找
 
     Returns:
         anchorId, name, description, entityType, threeViews (with status per slot)
@@ -972,24 +1051,9 @@ async def get_entity_state(job_id: str, anchor_id: str):
         raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
 
     ir_manager = FilmIRManager(job_id)
-    identity_anchors = ir_manager.ir["pillars"]["IV_renderStrategy"]["identityAnchors"]
 
-    # 判断是角色还是场景
-    entity = None
-    entity_type = None
-
-    for char in identity_anchors.get("characters", []):
-        if char.get("anchorId") == anchor_id:
-            entity = char
-            entity_type = "character"
-            break
-
-    if not entity:
-        for env in identity_anchors.get("environments", []):
-            if env.get("anchorId") == anchor_id:
-                entity = env
-                entity_type = "environment"
-                break
+    # 使用辅助函数查找实体（支持 anchorId 和 entityId）
+    entity, entity_type, source = _find_entity_by_id(ir_manager, anchor_id)
 
     if not entity:
         raise HTTPException(status_code=404, detail=f"Entity not found: {anchor_id}")
@@ -1045,35 +1109,42 @@ async def get_entity_state(job_id: str, anchor_id: str):
 async def update_entity_description(job_id: str, anchor_id: str, request: UpdateDescriptionRequest):
     """
     更新实体的描述（用于 AI 生成时使用）
+    支持通过 anchorId（identityAnchors）或 entityId（characterLedger）查找
     """
     job_dir = Path("jobs") / job_id
     if not job_dir.exists():
         raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
 
     ir_manager = FilmIRManager(job_id)
-    identity_anchors = ir_manager.ir["pillars"]["IV_renderStrategy"]["identityAnchors"]
 
-    # 查找并更新实体
+    # 使用辅助函数查找实体
+    entity, entity_type, source = _find_entity_by_id(ir_manager, anchor_id)
+
+    if not entity:
+        raise HTTPException(status_code=404, detail=f"Entity not found: {anchor_id}")
+
+    # 根据来源更新描述
     updated = False
-
-    for char in identity_anchors.get("characters", []):
-        if char.get("anchorId") == anchor_id:
-            char["detailedDescription"] = request.description
-            updated = True
-            break
-
-    if not updated:
-        for env in identity_anchors.get("environments", []):
-            if env.get("anchorId") == anchor_id:
-                env["detailedDescription"] = request.description
+    if source == "anchor":
+        identity_anchors = ir_manager.ir["pillars"]["IV_renderStrategy"]["identityAnchors"]
+        entity_list = identity_anchors.get("characters" if entity_type == "character" else "environments", [])
+        for e in entity_list:
+            if e.get("anchorId") == anchor_id:
+                e["detailedDescription"] = request.description
+                updated = True
+                break
+    else:
+        # 更新 characterLedger/environmentLedger (在 II_narrativeTemplate 下)
+        narrative_template = ir_manager.ir["pillars"].get("II_narrativeTemplate", {})
+        entity_list = narrative_template.get("characterLedger" if entity_type == "character" else "environmentLedger", [])
+        for e in entity_list:
+            if e.get("entityId") == anchor_id:
+                e["detailedDescription"] = request.description
                 updated = True
                 break
 
-    if not updated:
-        raise HTTPException(status_code=404, detail=f"Entity not found: {anchor_id}")
-
-    # 保存更新
-    ir_manager.save()
+    if updated:
+        ir_manager.save()
 
     return {
         "status": "success",
@@ -1086,6 +1157,7 @@ async def update_entity_description(job_id: str, anchor_id: str, request: Update
 async def upload_entity_view(job_id: str, anchor_id: str, view: str, file: UploadFile = File(...)):
     """
     上传图片到特定槽位
+    支持通过 anchorId（identityAnchors）或 entityId（characterLedger）查找
 
     Args:
         view: 视图类型
@@ -1116,36 +1188,19 @@ async def upload_entity_view(job_id: str, anchor_id: str, view: str, file: Uploa
         content = await file.read()
         f.write(content)
 
-    # 更新 film_ir.json
+    # 更新 film_ir.json - 使用辅助函数查找实体
     ir_manager = FilmIRManager(job_id)
-    identity_anchors = ir_manager.ir["pillars"]["IV_renderStrategy"]["identityAnchors"]
+    entity, entity_type, source = _find_entity_by_id(ir_manager, anchor_id)
 
-    updated = False
-    entity_type = None
-
-    for char in identity_anchors.get("characters", []):
-        if char.get("anchorId") == anchor_id:
-            if "threeViews" not in char:
-                char["threeViews"] = {}
-            char["threeViews"][view] = str(file_path)
-            updated = True
-            entity_type = "character"
-            break
-
-    if not updated:
-        for env in identity_anchors.get("environments", []):
-            if env.get("anchorId") == anchor_id:
-                if "threeViews" not in env:
-                    env["threeViews"] = {}
-                env["threeViews"][view] = str(file_path)
-                updated = True
-                entity_type = "environment"
-                break
-
-    if not updated:
+    if not entity:
         raise HTTPException(status_code=404, detail=f"Entity not found: {anchor_id}")
 
-    ir_manager.save()
+    # 获取或创建 threeViews
+    three_views = entity.get("threeViews", {})
+    three_views[view] = str(file_path)
+
+    # 保存到正确的位置
+    _save_entity_three_views(ir_manager, anchor_id, entity_type, source, three_views)
 
     return {
         "status": "success",
@@ -1160,37 +1215,36 @@ async def upload_entity_view(job_id: str, anchor_id: str, view: str, file: Uploa
 entity_generation_tasks: Dict[str, Dict[str, Any]] = {}
 
 
+class GenerateViewsRequest(BaseModel):
+    force: bool = False  # 强制重新生成所有视图
+
+
 @app.post("/api/job/{job_id}/generate-views/{anchor_id}")
-async def generate_entity_views(job_id: str, anchor_id: str, background_tasks: BackgroundTasks):
+async def generate_entity_views(
+    job_id: str,
+    anchor_id: str,
+    background_tasks: BackgroundTasks,
+    request: GenerateViewsRequest = None
+):
     """
     AI 生成缺失的槽位（跳过已上传的）
+    支持通过 anchorId（identityAnchors）或 entityId（characterLedger）查找
+
+    Args:
+        force: 如果为 True，则强制重新生成所有视图（忽略已存在的）
 
     会检查三个槽位的状态，只生成空槽位的图片。
     已上传的图片会作为 AI 生成的参考。
     """
+    force = request.force if request else False
     job_dir = Path("jobs") / job_id
     if not job_dir.exists():
         raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
 
     ir_manager = FilmIRManager(job_id)
-    identity_anchors = ir_manager.ir["pillars"]["IV_renderStrategy"]["identityAnchors"]
 
-    # 查找实体
-    entity = None
-    entity_type = None
-
-    for char in identity_anchors.get("characters", []):
-        if char.get("anchorId") == anchor_id:
-            entity = char
-            entity_type = "character"
-            break
-
-    if not entity:
-        for env in identity_anchors.get("environments", []):
-            if env.get("anchorId") == anchor_id:
-                entity = env
-                entity_type = "environment"
-                break
+    # 使用辅助函数查找实体（支持 anchorId 和 entityId）
+    entity, entity_type, source = _find_entity_by_id(ir_manager, anchor_id)
 
     if not entity:
         raise HTTPException(status_code=404, detail=f"Entity not found: {anchor_id}")
@@ -1203,13 +1257,18 @@ async def generate_entity_views(job_id: str, anchor_id: str, background_tasks: B
     else:
         all_views = ["wide", "detail", "alt"]
 
-    missing_views = [v for v in all_views if not three_views.get(v)]
+    # 如果 force=True，重新生成所有视图
+    if force:
+        missing_views = all_views
+        three_views = {}  # 清空现有视图，全部重新生成
+    else:
+        missing_views = [v for v in all_views if not three_views.get(v)]
 
     if not missing_views:
         return {
             "status": "already_complete",
             "anchorId": anchor_id,
-            "message": "All views already exist"
+            "message": "All views already exist. Use force=true to regenerate."
         }
 
     # 检查是否已在生成
@@ -1223,10 +1282,10 @@ async def generate_entity_views(job_id: str, anchor_id: str, background_tasks: B
                 "message": "Generation already in progress"
             }
 
-    # 启动后台生成任务
+    # 启动后台生成任务（传递 source 以便正确保存结果）
     background_tasks.add_task(
         run_entity_generation_background,
-        job_id, anchor_id, entity_type, entity, missing_views, three_views
+        job_id, anchor_id, entity_type, entity, missing_views, three_views, source
     )
 
     entity_generation_tasks[task_key] = {
@@ -1250,15 +1309,27 @@ def run_entity_generation_background(
     entity_type: str,
     entity: dict,
     missing_views: list,
-    existing_views: dict
+    existing_views: dict,
+    source: str = "anchor"
 ):
-    """后台运行单实体资产生成"""
+    """
+    后台运行单实体资产生成
+
+    Args:
+        source: "anchor" 或 "ledger"，决定结果保存到哪里
+    """
     task_key = f"{job_id}_{anchor_id}"
 
     try:
         from core.asset_generator import AssetGenerator
 
         generator = AssetGenerator(job_id, ".")
+
+        # 重新从 film_ir.json 读取最新的实体信息（确保使用最新的描述）
+        ir_manager = FilmIRManager(job_id)
+        fresh_entity, _, _ = _find_entity_by_id(ir_manager, anchor_id)
+        if fresh_entity:
+            entity = fresh_entity  # 使用最新数据
 
         # 获取实体信息
         anchor_name = entity.get("name") or entity.get("anchorName", anchor_id)
@@ -1311,22 +1382,17 @@ def run_entity_generation_background(
                 user_reference_path=reference_path
             )
 
-        # 更新 film_ir.json
+        # 更新 film_ir.json - 根据 source 保存到正确的位置
         ir_manager = FilmIRManager(job_id)
-        identity_anchors = ir_manager.ir["pillars"]["IV_renderStrategy"]["identityAnchors"]
 
-        # 找到实体并更新
-        entities = identity_anchors.get("characters" if entity_type == "character" else "environments", [])
-        for ent in entities:
-            if ent.get("anchorId") == anchor_id:
-                if "threeViews" not in ent:
-                    ent["threeViews"] = {}
-                for view_name, asset in results.items():
-                    if asset.file_path:
-                        ent["threeViews"][view_name] = asset.file_path
-                break
+        # 构建新的 threeViews
+        new_three_views = dict(existing_views)  # 保留已有的
+        for view_name, asset in results.items():
+            if asset.file_path:
+                new_three_views[view_name] = asset.file_path
 
-        ir_manager.save()
+        # 使用辅助函数保存
+        _save_entity_three_views(ir_manager, anchor_id, entity_type, source, new_three_views)
 
         # 更新任务状态
         entity_generation_tasks[task_key] = {

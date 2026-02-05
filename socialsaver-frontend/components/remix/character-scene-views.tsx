@@ -2,27 +2,63 @@
 
 import React from "react"
 
-import { useState, useRef } from "react"
+import { useState, useRef, useEffect } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
-import { 
-  User, 
-  MapPin, 
-  Upload, 
-  Check, 
-  X, 
-  Plus, 
-  Trash2,
+import {
+  User,
+  MapPin,
+  Upload,
+  Check,
+  X,
   ImageIcon,
   CheckCircle,
-  Edit3
+  Sparkles,
+  Loader2
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import type { CharacterView, SceneView } from "@/lib/types/remix"
+import {
+  uploadEntityView,
+  updateEntityDescription,
+  generateEntityViews,
+  pollGenerateViewsStatus,
+  getEntityState,
+  type EntityState,
+} from "@/lib/api"
+
+// Character/Environment Entity from Character Ledger (Video Analysis)
+interface LedgerEntity {
+  entityId: string;
+  entityType: string;
+  importance: "PRIMARY" | "SECONDARY" | "BACKGROUND";
+  displayName: string;
+  visualSignature: string;
+  detailedDescription: string;
+  appearsInShots: string[];
+  shotCount: number;
+}
+
+// Identity Anchor from Remix (overrides)
+interface IdentityAnchor {
+  anchorId: string;
+  anchorName?: string;
+  name?: string;
+  detailedDescription?: string;
+  originalPlaceholder?: string;  // Maps to original entityId
+  styleAdaptation?: string;
+  atmosphericConditions?: string;
+}
 
 interface CharacterSceneViewsProps {
+  jobId: string
+  // Data from Video Analysis (Character Ledger) - provides complete list
+  characterLedger: LedgerEntity[]
+  environmentLedger: LedgerEntity[]
+  // Data from Remix (Identity Anchors) - provides overrides
+  characterAnchors: IdentityAnchor[]
+  environmentAnchors: IdentityAnchor[]
   characters: CharacterView[]
   scenes: SceneView[]
   onCharactersChange: (characters: CharacterView[]) => void
@@ -31,25 +67,35 @@ interface CharacterSceneViewsProps {
   onBack: () => void
 }
 
-function ViewUploadSlot({ 
-  label, 
-  imageUrl, 
-  onUpload 
-}: { 
+function ViewUploadSlot({
+  label,
+  imageUrl,
+  isLoading,
+  onUpload,
+  disabled
+}: {
   label: string
-  imageUrl?: string
-  onUpload: (file: File) => void 
+  imageUrl?: string | null
+  isLoading?: boolean
+  onUpload: (file: File) => void
+  disabled?: boolean
 }) {
   const inputRef = useRef<HTMLInputElement>(null)
 
   const handleClick = () => {
-    inputRef.current?.click()
+    if (!disabled && !isLoading) {
+      inputRef.current?.click()
+    }
   }
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (file) {
       onUpload(file)
+    }
+    // Reset input
+    if (inputRef.current) {
+      inputRef.current.value = ""
     }
   }
 
@@ -58,17 +104,21 @@ function ViewUploadSlot({
       <button
         type="button"
         onClick={handleClick}
+        disabled={disabled || isLoading}
         className={cn(
           "w-24 h-32 rounded-lg border-2 border-dashed flex flex-col items-center justify-center gap-2 transition-all",
-          imageUrl 
-            ? "border-accent bg-accent/10" 
-            : "border-border hover:border-accent hover:bg-secondary/50"
+          imageUrl
+            ? "border-accent bg-accent/10"
+            : "border-border hover:border-accent hover:bg-secondary/50",
+          (disabled || isLoading) && "opacity-50 cursor-not-allowed"
         )}
       >
-        {imageUrl ? (
-          <img 
-            src={imageUrl || "/placeholder.svg"} 
-            alt={label} 
+        {isLoading ? (
+          <Loader2 className="w-6 h-6 text-accent animate-spin" />
+        ) : imageUrl ? (
+          <img
+            src={imageUrl}
+            alt={label}
             className="w-full h-full object-cover rounded-lg"
           />
         ) : (
@@ -90,26 +140,107 @@ function ViewUploadSlot({
   )
 }
 
-function CharacterCard({ 
-  character, 
-  onUpdate, 
-  onDelete 
-}: { 
+function CharacterCard({
+  jobId,
+  anchorId,
+  character,
+  onUpdate,
+}: {
+  jobId: string
+  anchorId: string
   character: CharacterView
   onUpdate: (updates: Partial<CharacterView>) => void
-  onDelete: () => void
 }) {
-  const [isEditing, setIsEditing] = useState(!character.confirmed)
+  const [isGenerating, setIsGenerating] = useState(false)
+  const [uploadingView, setUploadingView] = useState<string | null>(null)
+  const [isSavingDescription, setIsSavingDescription] = useState(false)
+  const [localDescription, setLocalDescription] = useState(character.description)
 
-  const handleImageUpload = (view: 'frontView' | 'sideView' | 'backView', file: File) => {
-    const url = URL.createObjectURL(file)
-    onUpdate({ [view]: url })
+  // Sync local description when character changes
+  useEffect(() => {
+    setLocalDescription(character.description)
+  }, [character.description])
+
+  const handleImageUpload = async (view: 'front' | 'side' | 'back', file: File) => {
+    setUploadingView(view)
+    try {
+      const result = await uploadEntityView(jobId, anchorId, view, file)
+      // Map backend view names to frontend property names
+      const viewMap: Record<string, string> = {
+        front: 'frontView',
+        side: 'sideView',
+        back: 'backView'
+      }
+      onUpdate({ [viewMap[view]]: result.url })
+    } catch (error) {
+      console.error("Upload failed:", error)
+    } finally {
+      setUploadingView(null)
+    }
+  }
+
+  const handleDescriptionBlur = async () => {
+    if (localDescription !== character.description) {
+      setIsSavingDescription(true)
+      try {
+        await updateEntityDescription(jobId, anchorId, localDescription)
+        onUpdate({ description: localDescription })
+      } catch (error) {
+        console.error("Failed to save description:", error)
+      } finally {
+        setIsSavingDescription(false)
+      }
+    }
+  }
+
+  const handleAIGenerate = async (forceRegenerate: boolean = false) => {
+    setIsGenerating(true)
+    try {
+      // Always save description first (ensures latest description is used)
+      await updateEntityDescription(jobId, anchorId, localDescription)
+      onUpdate({ description: localDescription })
+
+      // Trigger AI generation (with force if regenerating)
+      const result = await generateEntityViews(jobId, anchorId, forceRegenerate)
+
+      if (result.status === "already_complete" && !forceRegenerate) {
+        onUpdate({ confirmed: true })
+        setIsGenerating(false)
+        return
+      }
+
+      // Poll for completion
+      await pollGenerateViewsStatus(
+        jobId,
+        anchorId,
+        (status) => {
+          console.log("Generation status:", status.status)
+        },
+        3000,
+        40
+      )
+
+      // Fetch updated state (add cache buster to get fresh images)
+      const updatedState = await getEntityState(jobId, anchorId)
+      const cacheBuster = `?t=${Date.now()}`
+      onUpdate({
+        frontView: updatedState.threeViews.front?.url ? updatedState.threeViews.front.url + cacheBuster : undefined,
+        sideView: updatedState.threeViews.side?.url ? updatedState.threeViews.side.url + cacheBuster : undefined,
+        backView: updatedState.threeViews.back?.url ? updatedState.threeViews.back.url + cacheBuster : undefined,
+        confirmed: true
+      })
+    } catch (error) {
+      console.error("AI generation failed:", error)
+    } finally {
+      setIsGenerating(false)
+    }
   }
 
   const handleConfirm = () => {
     onUpdate({ confirmed: true })
-    setIsEditing(false)
   }
+
+  const allViewsFilled = character.frontView && character.sideView && character.backView
 
   return (
     <Card className={cn(
@@ -120,121 +251,193 @@ function CharacterCard({
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <User className="w-5 h-5 text-accent" />
-            {isEditing ? (
-              <Input
-                value={character.name}
-                onChange={(e) => onUpdate({ name: e.target.value })}
-                placeholder="Character name"
-                className="h-8 w-48 bg-secondary border-border text-foreground"
-              />
-            ) : (
-              <CardTitle className="text-base text-foreground">{character.name}</CardTitle>
-            )}
+            <CardTitle className="text-base text-foreground">{character.name}</CardTitle>
             {character.confirmed && (
               <CheckCircle className="w-4 h-4 text-accent" />
             )}
           </div>
-          <div className="flex items-center gap-2">
-            {!isEditing && (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => setIsEditing(true)}
-                className="text-muted-foreground hover:text-foreground"
-              >
-                <Edit3 className="w-4 h-4" />
-              </Button>
-            )}
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={onDelete}
-              className="text-destructive hover:text-destructive hover:bg-destructive/10"
-            >
-              <Trash2 className="w-4 h-4" />
-            </Button>
-          </div>
+          <span className="text-xs text-muted-foreground font-mono">{anchorId}</span>
         </div>
       </CardHeader>
       <CardContent className="space-y-4">
         {/* Three View Slots */}
         <div className="flex justify-center gap-4">
-          <ViewUploadSlot 
-            label="Front View" 
+          <ViewUploadSlot
+            label="Front"
             imageUrl={character.frontView}
-            onUpload={(file) => handleImageUpload('frontView', file)}
+            isLoading={uploadingView === 'front'}
+            disabled={isGenerating}
+            onUpload={(file) => handleImageUpload('front', file)}
           />
-          <ViewUploadSlot 
-            label="Side View" 
+          <ViewUploadSlot
+            label="Side"
             imageUrl={character.sideView}
-            onUpload={(file) => handleImageUpload('sideView', file)}
+            isLoading={uploadingView === 'side'}
+            disabled={isGenerating}
+            onUpload={(file) => handleImageUpload('side', file)}
           />
-          <ViewUploadSlot 
-            label="Back View" 
+          <ViewUploadSlot
+            label="Back"
             imageUrl={character.backView}
-            onUpload={(file) => handleImageUpload('backView', file)}
+            isLoading={uploadingView === 'back'}
+            disabled={isGenerating}
+            onUpload={(file) => handleImageUpload('back', file)}
           />
         </div>
 
         {/* Description */}
-        {isEditing ? (
-          <Textarea
-            value={character.description}
-            onChange={(e) => onUpdate({ description: e.target.value })}
-            placeholder="Character description, traits, role in story..."
-            className="bg-secondary border-border text-foreground min-h-[80px]"
-          />
-        ) : (
-          <p className="text-sm text-muted-foreground">{character.description}</p>
-        )}
+        <Textarea
+          value={localDescription}
+          onChange={(e) => setLocalDescription(e.target.value)}
+          onBlur={handleDescriptionBlur}
+          placeholder="Character description for AI generation..."
+          className="bg-secondary border-border text-foreground min-h-[80px] text-sm"
+          disabled={isGenerating}
+        />
 
-        {/* Confirm Button */}
-        {isEditing && (
-          <div className="flex justify-end gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setIsEditing(false)}
-              className="border-border text-foreground hover:bg-secondary bg-transparent"
-            >
-              <X className="w-4 h-4 mr-1" />
-              Cancel
-            </Button>
+        {/* Action Buttons */}
+        <div className="flex justify-end gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => handleAIGenerate(!!allViewsFilled)}
+            disabled={isGenerating || !localDescription.trim()}
+            className="border-accent text-accent hover:bg-accent/10 bg-transparent"
+          >
+            {isGenerating ? (
+              <>
+                <Loader2 className="w-4 h-4 mr-1 animate-spin" />
+                Generating...
+              </>
+            ) : allViewsFilled ? (
+              <>
+                <Sparkles className="w-4 h-4 mr-1" />
+                Regenerate
+              </>
+            ) : (
+              <>
+                <Sparkles className="w-4 h-4 mr-1" />
+                AI Generate
+              </>
+            )}
+          </Button>
+          {allViewsFilled && !character.confirmed && (
             <Button
               size="sm"
               onClick={handleConfirm}
               className="bg-accent text-accent-foreground hover:bg-accent/90"
             >
               <Check className="w-4 h-4 mr-1" />
-              Confirm Character
+              Confirm
             </Button>
-          </div>
-        )}
+          )}
+        </div>
       </CardContent>
     </Card>
   )
 }
 
-function SceneCard({ 
-  scene, 
-  onUpdate, 
-  onDelete 
-}: { 
+function SceneCard({
+  jobId,
+  anchorId,
+  scene,
+  onUpdate,
+}: {
+  jobId: string
+  anchorId: string
   scene: SceneView
   onUpdate: (updates: Partial<SceneView>) => void
-  onDelete: () => void
 }) {
-  const [isEditing, setIsEditing] = useState(!scene.confirmed)
+  const [isGenerating, setIsGenerating] = useState(false)
+  const [uploadingView, setUploadingView] = useState<string | null>(null)
+  const [isSavingDescription, setIsSavingDescription] = useState(false)
+  const [localDescription, setLocalDescription] = useState(scene.description)
 
-  const handleImageUpload = (view: 'establishingShot' | 'detailView' | 'alternateAngle', file: File) => {
-    const url = URL.createObjectURL(file)
-    onUpdate({ [view]: url })
+  // Sync local description when scene changes
+  useEffect(() => {
+    setLocalDescription(scene.description)
+  }, [scene.description])
+
+  const handleImageUpload = async (view: 'wide' | 'detail' | 'alt', file: File) => {
+    setUploadingView(view)
+    try {
+      const result = await uploadEntityView(jobId, anchorId, view, file)
+      // Map backend view names to frontend property names
+      const viewMap: Record<string, string> = {
+        wide: 'establishingShot',
+        detail: 'detailView',
+        alt: 'alternateAngle'
+      }
+      onUpdate({ [viewMap[view]]: result.url })
+    } catch (error) {
+      console.error("Upload failed:", error)
+    } finally {
+      setUploadingView(null)
+    }
+  }
+
+  const handleDescriptionBlur = async () => {
+    if (localDescription !== scene.description) {
+      setIsSavingDescription(true)
+      try {
+        await updateEntityDescription(jobId, anchorId, localDescription)
+        onUpdate({ description: localDescription })
+      } catch (error) {
+        console.error("Failed to save description:", error)
+      } finally {
+        setIsSavingDescription(false)
+      }
+    }
+  }
+
+  const handleAIGenerate = async (forceRegenerate: boolean = false) => {
+    setIsGenerating(true)
+    try {
+      // Always save description first (ensures latest description is used)
+      await updateEntityDescription(jobId, anchorId, localDescription)
+      onUpdate({ description: localDescription })
+
+      // Trigger AI generation (with force if regenerating)
+      const result = await generateEntityViews(jobId, anchorId, forceRegenerate)
+
+      if (result.status === "already_complete" && !forceRegenerate) {
+        onUpdate({ confirmed: true })
+        setIsGenerating(false)
+        return
+      }
+
+      // Poll for completion
+      await pollGenerateViewsStatus(
+        jobId,
+        anchorId,
+        (status) => {
+          console.log("Generation status:", status.status)
+        },
+        3000,
+        40
+      )
+
+      // Fetch updated state (add cache buster to get fresh images)
+      const updatedState = await getEntityState(jobId, anchorId)
+      const cacheBuster = `?t=${Date.now()}`
+      onUpdate({
+        establishingShot: updatedState.threeViews.wide?.url ? updatedState.threeViews.wide.url + cacheBuster : undefined,
+        detailView: updatedState.threeViews.detail?.url ? updatedState.threeViews.detail.url + cacheBuster : undefined,
+        alternateAngle: updatedState.threeViews.alt?.url ? updatedState.threeViews.alt.url + cacheBuster : undefined,
+        confirmed: true
+      })
+    } catch (error) {
+      console.error("AI generation failed:", error)
+    } finally {
+      setIsGenerating(false)
+    }
   }
 
   const handleConfirm = () => {
     onUpdate({ confirmed: true })
-    setIsEditing(false)
   }
+
+  const allViewsFilled = scene.establishingShot && scene.detailView && scene.alternateAngle
 
   return (
     <Card className={cn(
@@ -245,102 +448,122 @@ function SceneCard({
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <MapPin className="w-5 h-5 text-accent" />
-            {isEditing ? (
-              <Input
-                value={scene.name}
-                onChange={(e) => onUpdate({ name: e.target.value })}
-                placeholder="Scene name"
-                className="h-8 w-48 bg-secondary border-border text-foreground"
-              />
-            ) : (
-              <CardTitle className="text-base text-foreground">{scene.name}</CardTitle>
-            )}
+            <CardTitle className="text-base text-foreground">{scene.name}</CardTitle>
             {scene.confirmed && (
               <CheckCircle className="w-4 h-4 text-accent" />
             )}
           </div>
-          <div className="flex items-center gap-2">
-            {!isEditing && (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => setIsEditing(true)}
-                className="text-muted-foreground hover:text-foreground"
-              >
-                <Edit3 className="w-4 h-4" />
-              </Button>
-            )}
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={onDelete}
-              className="text-destructive hover:text-destructive hover:bg-destructive/10"
-            >
-              <Trash2 className="w-4 h-4" />
-            </Button>
-          </div>
+          <span className="text-xs text-muted-foreground font-mono">{anchorId}</span>
         </div>
       </CardHeader>
       <CardContent className="space-y-4">
         {/* Three View Slots */}
         <div className="flex justify-center gap-4">
-          <ViewUploadSlot 
-            label="Wide Shot" 
+          <ViewUploadSlot
+            label="Wide"
             imageUrl={scene.establishingShot}
-            onUpload={(file) => handleImageUpload('establishingShot', file)}
+            isLoading={uploadingView === 'wide'}
+            disabled={isGenerating}
+            onUpload={(file) => handleImageUpload('wide', file)}
           />
-          <ViewUploadSlot 
-            label="Detail View" 
+          <ViewUploadSlot
+            label="Detail"
             imageUrl={scene.detailView}
-            onUpload={(file) => handleImageUpload('detailView', file)}
+            isLoading={uploadingView === 'detail'}
+            disabled={isGenerating}
+            onUpload={(file) => handleImageUpload('detail', file)}
           />
-          <ViewUploadSlot 
-            label="Alt Angle" 
+          <ViewUploadSlot
+            label="Alt"
             imageUrl={scene.alternateAngle}
-            onUpload={(file) => handleImageUpload('alternateAngle', file)}
+            isLoading={uploadingView === 'alt'}
+            disabled={isGenerating}
+            onUpload={(file) => handleImageUpload('alt', file)}
           />
         </div>
 
         {/* Description */}
-        {isEditing ? (
-          <Textarea
-            value={scene.description}
-            onChange={(e) => onUpdate({ description: e.target.value })}
-            placeholder="Scene description, mood, key elements..."
-            className="bg-secondary border-border text-foreground min-h-[80px]"
-          />
-        ) : (
-          <p className="text-sm text-muted-foreground">{scene.description}</p>
-        )}
+        <Textarea
+          value={localDescription}
+          onChange={(e) => setLocalDescription(e.target.value)}
+          onBlur={handleDescriptionBlur}
+          placeholder="Scene description for AI generation..."
+          className="bg-secondary border-border text-foreground min-h-[80px] text-sm"
+          disabled={isGenerating}
+        />
 
-        {/* Confirm Button */}
-        {isEditing && (
-          <div className="flex justify-end gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setIsEditing(false)}
-              className="border-border text-foreground hover:bg-secondary bg-transparent"
-            >
-              <X className="w-4 h-4 mr-1" />
-              Cancel
-            </Button>
+        {/* Action Buttons */}
+        <div className="flex justify-end gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => handleAIGenerate(!!allViewsFilled)}
+            disabled={isGenerating || !localDescription.trim()}
+            className="border-accent text-accent hover:bg-accent/10 bg-transparent"
+          >
+            {isGenerating ? (
+              <>
+                <Loader2 className="w-4 h-4 mr-1 animate-spin" />
+                Generating...
+              </>
+            ) : allViewsFilled ? (
+              <>
+                <Sparkles className="w-4 h-4 mr-1" />
+                Regenerate
+              </>
+            ) : (
+              <>
+                <Sparkles className="w-4 h-4 mr-1" />
+                AI Generate
+              </>
+            )}
+          </Button>
+          {allViewsFilled && !scene.confirmed && (
             <Button
               size="sm"
               onClick={handleConfirm}
               className="bg-accent text-accent-foreground hover:bg-accent/90"
             >
               <Check className="w-4 h-4 mr-1" />
-              Confirm Scene
+              Confirm
             </Button>
-          </div>
-        )}
+          )}
+        </div>
       </CardContent>
     </Card>
   )
 }
 
+// Helper function to find matching anchor for a ledger entity
+function findMatchingAnchor(
+  entity: LedgerEntity,
+  anchors: IdentityAnchor[]
+): IdentityAnchor | undefined {
+  // First try to match by originalPlaceholder -> entityId
+  const byPlaceholder = anchors.find(
+    (anchor) => anchor.originalPlaceholder === entity.entityId
+  )
+  if (byPlaceholder) return byPlaceholder
+
+  // Fallback: match by name similarity (case-insensitive contains)
+  const entityNameLower = entity.displayName.toLowerCase()
+  const byName = anchors.find((anchor) => {
+    const anchorName = (anchor.anchorName || anchor.name || "").toLowerCase()
+    return (
+      anchorName.includes(entityNameLower) ||
+      entityNameLower.includes(anchorName) ||
+      anchorName === entityNameLower
+    )
+  })
+  return byName
+}
+
 export function CharacterSceneViews({
+  jobId,
+  characterLedger,
+  environmentLedger,
+  characterAnchors,
+  environmentAnchors,
   characters,
   scenes,
   onCharactersChange,
@@ -348,34 +571,95 @@ export function CharacterSceneViews({
   onConfirm,
   onBack,
 }: CharacterSceneViewsProps) {
-  const addCharacter = () => {
-    const newChar: CharacterView = {
-      id: `char-${Date.now()}`,
-      name: "",
-      description: "",
-      confirmed: false,
+  // Initialize characters: Ledger (complete list) + Anchors (overrides)
+  // Merge logic: All entities from ledger are shown, anchors provide description updates
+  useEffect(() => {
+    if (characters.length === 0 && characterLedger.length > 0) {
+      const initialChars: CharacterView[] = characterLedger.map((entity) => {
+        // Check if there's a matching anchor with updated description
+        const matchingAnchor = findMatchingAnchor(entity, characterAnchors)
+
+        // Use anchor's description if available (remix override), otherwise use ledger's
+        const description = matchingAnchor?.detailedDescription
+          || entity.detailedDescription
+          || entity.visualSignature
+          || ""
+
+        // Use anchor's name if available (for renamed characters)
+        const displayName = matchingAnchor?.anchorName
+          || matchingAnchor?.name
+          || entity.displayName
+
+        // Use anchor ID if matched, otherwise use entity ID
+        const id = matchingAnchor?.anchorId || entity.entityId
+
+        return {
+          id,
+          name: displayName,
+          description,
+          frontView: undefined,
+          sideView: undefined,
+          backView: undefined,
+          confirmed: false,
+        }
+      })
+      onCharactersChange(initialChars)
     }
-    onCharactersChange([...characters, newChar])
-  }
+  }, [characterLedger, characterAnchors, characters.length, onCharactersChange])
+
+  // Initialize scenes: Ledger (complete list) + Anchors (overrides)
+  // Merge logic: All environments from ledger are shown, anchors provide style/description updates
+  useEffect(() => {
+    if (scenes.length === 0 && environmentLedger.length > 0) {
+      const initialScenes: SceneView[] = environmentLedger.map((entity) => {
+        // Check if there's a matching anchor with updated description
+        const matchingAnchor = findMatchingAnchor(entity, environmentAnchors)
+
+        // For environments, anchors may have styleAdaptation or atmosphericConditions
+        // Combine these with the original description if present
+        let description = entity.detailedDescription || entity.visualSignature || ""
+
+        if (matchingAnchor) {
+          // If anchor has a detailed description, use it as the primary description
+          if (matchingAnchor.detailedDescription) {
+            description = matchingAnchor.detailedDescription
+          }
+          // Append style adaptation if present
+          if (matchingAnchor.styleAdaptation) {
+            description = `${description}\n\nStyle: ${matchingAnchor.styleAdaptation}`
+          }
+          // Append atmospheric conditions if present
+          if (matchingAnchor.atmosphericConditions) {
+            description = `${description}\n\nAtmosphere: ${matchingAnchor.atmosphericConditions}`
+          }
+        }
+
+        // Use anchor's name if available
+        const displayName = matchingAnchor?.anchorName
+          || matchingAnchor?.name
+          || entity.displayName
+
+        // Use anchor ID if matched, otherwise use entity ID
+        const id = matchingAnchor?.anchorId || entity.entityId
+
+        return {
+          id,
+          name: displayName,
+          description: description.trim(),
+          establishingShot: undefined,
+          detailView: undefined,
+          alternateAngle: undefined,
+          confirmed: false,
+        }
+      })
+      onScenesChange(initialScenes)
+    }
+  }, [environmentLedger, environmentAnchors, scenes.length, onScenesChange])
 
   const updateCharacter = (id: string, updates: Partial<CharacterView>) => {
     onCharactersChange(
       characters.map((c) => (c.id === id ? { ...c, ...updates } : c))
     )
-  }
-
-  const deleteCharacter = (id: string) => {
-    onCharactersChange(characters.filter((c) => c.id !== id))
-  }
-
-  const addScene = () => {
-    const newScene: SceneView = {
-      id: `scene-${Date.now()}`,
-      name: "",
-      description: "",
-      confirmed: false,
-    }
-    onScenesChange([...scenes, newScene])
   }
 
   const updateScene = (id: string, updates: Partial<SceneView>) => {
@@ -384,17 +668,12 @@ export function CharacterSceneViews({
     )
   }
 
-  const deleteScene = (id: string) => {
-    onScenesChange(scenes.filter((s) => s.id !== id))
-  }
+  const allConfirmed =
+    characters.length > 0 &&
+    characters.every((c) => c.confirmed) &&
+    (scenes.length === 0 || scenes.every((s) => s.confirmed))
 
-  const allConfirmed = 
-    characters.length > 0 && 
-    scenes.length > 0 && 
-    characters.every((c) => c.confirmed) && 
-    scenes.every((s) => s.confirmed)
-
-  const canProceedWithoutAll = characters.length > 0 || scenes.length > 0
+  const hasAnyContent = characters.length > 0 || scenes.length > 0
 
   return (
     <div className="space-y-8">
@@ -402,9 +681,9 @@ export function CharacterSceneViews({
       <Card className="bg-accent/10 border-accent">
         <CardContent className="py-4">
           <p className="text-sm text-foreground">
-            Before generating the storyboard, please confirm the character and scene reference views. 
-            Upload three-view images for each character (front, side, back) and scene (wide shot, detail, alternate angle) 
-            to ensure visual consistency in the final output.
+            Upload or AI-generate three-view reference images for characters and scenes.
+            You can upload your own images, or click &quot;AI Generate&quot; to create them automatically.
+            Missing views will be generated based on uploaded images and descriptions.
           </p>
         </CardContent>
       </Card>
@@ -415,32 +694,20 @@ export function CharacterSceneViews({
           <h3 className="text-lg font-semibold text-foreground flex items-center gap-2">
             <User className="w-5 h-5 text-accent" />
             Character Three-Views
+            <span className="text-sm font-normal text-muted-foreground">
+              ({characters.filter(c => c.confirmed).length}/{characters.length} confirmed)
+            </span>
           </h3>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={addCharacter}
-            className="border-border text-foreground hover:bg-secondary bg-transparent"
-          >
-            <Plus className="w-4 h-4 mr-1" />
-            Add Character
-          </Button>
         </div>
 
         {characters.length === 0 ? (
           <Card className="bg-card border-border border-dashed">
             <CardContent className="py-8 flex flex-col items-center justify-center text-center">
               <User className="w-12 h-12 text-muted-foreground mb-3" />
-              <p className="text-muted-foreground">No characters added yet</p>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={addCharacter}
-                className="mt-3 border-border text-foreground hover:bg-secondary bg-transparent"
-              >
-                <Plus className="w-4 h-4 mr-1" />
-                Add First Character
-              </Button>
+              <p className="text-muted-foreground">No characters from remix</p>
+              <p className="text-xs text-muted-foreground mt-1">
+                Characters will appear here after remix script generation
+              </p>
             </CardContent>
           </Card>
         ) : (
@@ -448,9 +715,10 @@ export function CharacterSceneViews({
             {characters.map((character) => (
               <CharacterCard
                 key={character.id}
+                jobId={jobId}
+                anchorId={character.id}
                 character={character}
                 onUpdate={(updates) => updateCharacter(character.id, updates)}
-                onDelete={() => deleteCharacter(character.id)}
               />
             ))}
           </div>
@@ -463,32 +731,20 @@ export function CharacterSceneViews({
           <h3 className="text-lg font-semibold text-foreground flex items-center gap-2">
             <MapPin className="w-5 h-5 text-accent" />
             Scene Three-Views
+            <span className="text-sm font-normal text-muted-foreground">
+              ({scenes.filter(s => s.confirmed).length}/{scenes.length} confirmed)
+            </span>
           </h3>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={addScene}
-            className="border-border text-foreground hover:bg-secondary bg-transparent"
-          >
-            <Plus className="w-4 h-4 mr-1" />
-            Add Scene
-          </Button>
         </div>
 
         {scenes.length === 0 ? (
           <Card className="bg-card border-border border-dashed">
             <CardContent className="py-8 flex flex-col items-center justify-center text-center">
               <MapPin className="w-12 h-12 text-muted-foreground mb-3" />
-              <p className="text-muted-foreground">No scenes added yet</p>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={addScene}
-                className="mt-3 border-border text-foreground hover:bg-secondary bg-transparent"
-              >
-                <Plus className="w-4 h-4 mr-1" />
-                Add First Scene
-              </Button>
+              <p className="text-muted-foreground">No scenes from remix</p>
+              <p className="text-xs text-muted-foreground mt-1">
+                Scenes will appear here after remix script generation
+              </p>
             </CardContent>
           </Card>
         ) : (
@@ -496,9 +752,10 @@ export function CharacterSceneViews({
             {scenes.map((scene) => (
               <SceneCard
                 key={scene.id}
+                jobId={jobId}
+                anchorId={scene.id}
                 scene={scene}
                 onUpdate={(updates) => updateScene(scene.id, updates)}
-                onDelete={() => deleteScene(scene.id)}
               />
             ))}
           </div>
@@ -515,7 +772,7 @@ export function CharacterSceneViews({
           Back to Script
         </Button>
         <div className="flex-1" />
-        {!allConfirmed && canProceedWithoutAll && (
+        {!allConfirmed && hasAnyContent && (
           <Button
             variant="outline"
             onClick={onConfirm}
@@ -526,7 +783,7 @@ export function CharacterSceneViews({
         )}
         <Button
           onClick={onConfirm}
-          disabled={!canProceedWithoutAll}
+          disabled={!hasAnyContent}
           className="bg-accent text-accent-foreground hover:bg-accent/90"
         >
           <Check className="w-4 h-4 mr-2" />

@@ -45,6 +45,7 @@ import {
   type EnvironmentEntity,
   type RemixDiffResponse,
   type RemixPromptsResponse,
+  type IdentityAnchor,
 } from "@/lib/api"
 
 // Step definitions - now with 5 steps including character/scene views
@@ -482,6 +483,10 @@ export default function RemixPage() {
   const [characters, setCharacters] = useState<CharacterView[]>([])
   const [scenes, setScenes] = useState<SceneView[]>([])
 
+  // Identity Anchors from Remix (for character/scene three-views)
+  const [characterAnchors, setCharacterAnchors] = useState<IdentityAnchor[]>([])
+  const [environmentAnchors, setEnvironmentAnchors] = useState<IdentityAnchor[]>([])
+
   // Track which step to display in UI
   const [displayStep, setDisplayStep] = useState<string>("analysis")
 
@@ -753,6 +758,16 @@ export default function RemixPage() {
       ])
       console.log("✅ Remix data received:", remixDiff.summary.totalShots, "shots")
 
+      // Store identity anchors for character/scene views step
+      if (remixPrompts.identityAnchors) {
+        setCharacterAnchors(remixPrompts.identityAnchors.characters || [])
+        setEnvironmentAnchors(remixPrompts.identityAnchors.environments || [])
+        console.log("📋 Identity anchors stored:", {
+          characters: remixPrompts.identityAnchors.characters?.length || 0,
+          environments: remixPrompts.identityAnchors.environments?.length || 0
+        })
+      }
+
       // Convert to clean, user-friendly script
       const script = convertToCleanScript(remixDiff, remixPrompts, userModifications)
       setGeneratedScript(script)
@@ -806,6 +821,12 @@ export default function RemixPage() {
       ])
       console.log("✅ Remix data received:", remixDiff.summary.totalShots, "shots")
 
+      // Store identity anchors for character/scene views step
+      if (remixPrompts.identityAnchors) {
+        setCharacterAnchors(remixPrompts.identityAnchors.characters || [])
+        setEnvironmentAnchors(remixPrompts.identityAnchors.environments || [])
+      }
+
       // Convert to clean, user-friendly script
       const script = convertToCleanScript(remixDiff, remixPrompts, newRequirements)
       setGeneratedScript(script)
@@ -828,38 +849,12 @@ export default function RemixPage() {
   const handleScriptConfirm = async () => {
     // After script confirmation, go to character/scene views step
     setCompletedSteps(["analysis", "script"])
-    
-    // Initialize default characters and scenes based on analysis
-    if (characters.length === 0) {
-      const defaultCharacters: CharacterView[] = [
-        {
-          id: "char-1",
-          name: analysisResult?.scriptAnalysis.characterSystem.protagonist.split(" - ")[0] || "Main Character",
-          description: analysisResult?.scriptAnalysis.characterSystem.protagonist || "",
-          confirmed: false,
-        }
-      ]
-      setCharacters(defaultCharacters)
-    }
-    
-    if (scenes.length === 0) {
-      const defaultScenes: SceneView[] = [
-        {
-          id: "scene-1",
-          name: "Opening Scene",
-          description: analysisResult?.storyTheme.basicInfo.background || "Urban setting",
-          confirmed: false,
-        },
-        {
-          id: "scene-2",
-          name: "Main Scene",
-          description: "Primary location for story events",
-          confirmed: false,
-        }
-      ]
-      setScenes(defaultScenes)
-    }
-    
+
+    // Reset characters and scenes so the CharacterSceneViews component
+    // will initialize them from characterLedger/environmentLedger + anchors
+    setCharacters([])
+    setScenes([])
+
     setStep("views")
     setDisplayStep("views")
   }
@@ -1058,6 +1053,9 @@ export default function RemixPage() {
     // Reset Character Ledger
     setCharacterLedger([])
     setEnvironmentLedger([])
+    // Reset Identity Anchors
+    setCharacterAnchors([])
+    setEnvironmentAnchors([])
   }
 
   const showStepIndicator = step !== "upload"
@@ -1283,8 +1281,13 @@ export default function RemixPage() {
             )}
 
             {/* Step: Character & Scene Views */}
-            {shouldShowViews && step === "views" && (
+            {shouldShowViews && step === "views" && currentJobId && (
               <CharacterSceneViews
+                jobId={currentJobId}
+                characterLedger={characterLedger}
+                environmentLedger={environmentLedger}
+                characterAnchors={characterAnchors}
+                environmentAnchors={environmentAnchors}
                 characters={characters}
                 scenes={scenes}
                 onCharactersChange={setCharacters}

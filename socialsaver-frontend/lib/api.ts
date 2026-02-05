@@ -730,3 +730,178 @@ export async function unbindAsset(
 
   return response.json();
 }
+
+// ============================================================
+// M5.1: Single Entity Asset Management API (槽位级别操作)
+// ============================================================
+
+export interface EntityThreeViewSlot {
+  url: string | null;
+  status: "empty" | "uploaded" | "generating";
+}
+
+export interface EntityState {
+  jobId: string;
+  anchorId: string;
+  name: string;
+  description: string;
+  entityType: "character" | "environment";
+  threeViews: {
+    [key: string]: EntityThreeViewSlot;
+  };
+}
+
+export interface GenerateViewsResponse {
+  status: string;
+  anchorId: string;
+  entityType?: string;
+  missingViews?: string[];
+  existingViews?: string[];
+  message?: string;
+}
+
+export interface GenerateViewsStatusResponse {
+  anchorId: string;
+  status: "not_started" | "running" | "completed" | "failed";
+  started_at?: string;
+  completed_at?: string;
+  missing_views?: string[];
+  results?: {
+    [view: string]: {
+      status: string;
+      path: string | null;
+    };
+  };
+  error?: string;
+}
+
+/**
+ * 获取单个实体的状态（描述 + 三槽位）
+ */
+export async function getEntityState(jobId: string, anchorId: string): Promise<EntityState> {
+  const response = await fetch(`${API_BASE_URL}/api/job/${jobId}/entity/${anchorId}`);
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: "Failed to fetch entity state" }));
+    throw new Error(error.detail || "Failed to fetch entity state");
+  }
+
+  return response.json();
+}
+
+/**
+ * 更新实体描述
+ */
+export async function updateEntityDescription(
+  jobId: string,
+  anchorId: string,
+  description: string
+): Promise<{ status: string; anchorId: string; description: string }> {
+  const response = await fetch(`${API_BASE_URL}/api/job/${jobId}/entity/${anchorId}/description`, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ description }),
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: "Failed to update description" }));
+    throw new Error(error.detail || "Failed to update description");
+  }
+
+  return response.json();
+}
+
+/**
+ * 上传图片到特定槽位
+ */
+export async function uploadEntityView(
+  jobId: string,
+  anchorId: string,
+  view: string,
+  file: File
+): Promise<{ status: string; anchorId: string; view: string; filePath: string; url: string }> {
+  const formData = new FormData();
+  formData.append("file", file);
+
+  const response = await fetch(`${API_BASE_URL}/api/job/${jobId}/upload-view/${anchorId}/${view}`, {
+    method: "POST",
+    body: formData,
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: "Failed to upload view" }));
+    throw new Error(error.detail || "Failed to upload view");
+  }
+
+  return response.json();
+}
+
+/**
+ * AI 生成缺失的槽位
+ */
+export async function generateEntityViews(
+  jobId: string,
+  anchorId: string,
+  force: boolean = false
+): Promise<GenerateViewsResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/job/${jobId}/generate-views/${anchorId}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ force }),
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: "Failed to generate views" }));
+    throw new Error(error.detail || "Failed to generate views");
+  }
+
+  return response.json();
+}
+
+/**
+ * 获取生成状态
+ */
+export async function getGenerateViewsStatus(
+  jobId: string,
+  anchorId: string
+): Promise<GenerateViewsStatusResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/job/${jobId}/generate-views/${anchorId}/status`);
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: "Failed to fetch generation status" }));
+    throw new Error(error.detail || "Failed to fetch generation status");
+  }
+
+  return response.json();
+}
+
+/**
+ * 轮询生成状态直到完成
+ */
+export async function pollGenerateViewsStatus(
+  jobId: string,
+  anchorId: string,
+  onUpdate: (status: GenerateViewsStatusResponse) => void,
+  intervalMs: number = 3000,
+  maxAttempts: number = 40
+): Promise<GenerateViewsStatusResponse> {
+  let attempts = 0;
+
+  while (attempts < maxAttempts) {
+    const status = await getGenerateViewsStatus(jobId, anchorId);
+    onUpdate(status);
+
+    if (status.status === "completed" || status.status === "failed") {
+      return status;
+    }
+
+    await new Promise(resolve => setTimeout(resolve, intervalMs));
+    attempts++;
+  }
+
+  throw new Error("Generation polling timeout");
+}
