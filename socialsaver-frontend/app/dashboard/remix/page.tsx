@@ -727,6 +727,12 @@ export default function RemixPage() {
   }
 
   const handleGenerateScript = async () => {
+    // Validate user input first
+    if (!userModifications.trim()) {
+      setApiError("Please describe your remix vision before generating the script.")
+      return
+    }
+
     setStep("generating")
     setApiError(null)
 
@@ -1061,14 +1067,15 @@ export default function RemixPage() {
   const showStepIndicator = step !== "upload"
 
   // Determine what content to show based on displayStep
-  const shouldShowAnalysis = displayStep === "analysis" && (step === "results" || step === "analyzing" || completedSteps.includes("analysis"))
-  const shouldShowScript = displayStep === "script" && (step === "script" || step === "generating" || completedSteps.includes("script"))
+  // Show analysis page during "generating" so the button loading state is visible
+  const shouldShowAnalysis = displayStep === "analysis" && (step === "results" || step === "analyzing" || step === "generating" || completedSteps.includes("analysis"))
+  const shouldShowScript = displayStep === "script" && (step === "script" || completedSteps.includes("script"))
   const shouldShowViews = displayStep === "views" && (step === "views" || completedSteps.includes("views"))
   const shouldShowStoryboard = displayStep === "storyboard" && (step === "storyboard" || step === "generatingStoryboard" || completedSteps.includes("storyboard"))
   const shouldShowVideo = displayStep === "video" && (step === "video" || completedSteps.includes("video"))
 
   return (
-    <div className="max-w-6xl mx-auto space-y-8">
+    <div className="w-full space-y-6 overflow-x-hidden px-6">
       {/* Page Header */}
       <div className="flex items-center justify-between">
         <div>
@@ -1120,49 +1127,51 @@ export default function RemixPage() {
 
       {/* Main Content with Step Indicator */}
       {showStepIndicator && (
-        <div className="grid grid-cols-1 lg:grid-cols-[220px_1fr] gap-8">
-          {/* Step Indicator - Left Side */}
-          <div className="hidden lg:block sticky top-24 h-fit">
-            <StepIndicator
-              steps={WORKFLOW_STEPS}
-              currentStep={getCurrentWorkflowStep()}
-              completedSteps={completedSteps}
-              onStepClick={handleStepClick}
-            />
+        <div className="space-y-6">
+          {/* Step Indicator - Horizontal Top Bar */}
+          <div className="flex items-center justify-between gap-2 p-4 bg-card border border-border rounded-lg overflow-x-auto relative z-10">
+            {WORKFLOW_STEPS.map((s, i) => {
+              const isClickable = completedSteps.includes(s.id) || getCurrentWorkflowStep() === s.id
+              const isCompleted = completedSteps.includes(s.id)
+              const isCurrent = getCurrentWorkflowStep() === s.id
+              const isGenerating = s.id === "script" && step === "generating"
+              return (
+                <div key={s.id} className="flex items-center gap-3 flex-1 min-w-0">
+                  <button
+                    type="button"
+                    onClick={() => isClickable && !isGenerating && handleStepClick(s.id)}
+                    disabled={!isClickable || isGenerating}
+                    className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium whitespace-nowrap transition-all flex-shrink-0 ${
+                      isGenerating
+                        ? 'bg-accent/20 text-accent border border-accent cursor-wait'
+                        : isCompleted
+                        ? 'bg-accent text-accent-foreground cursor-pointer hover:bg-accent/80'
+                        : isCurrent
+                        ? 'bg-accent/20 text-accent border border-accent cursor-pointer'
+                        : 'bg-secondary/50 text-muted-foreground cursor-not-allowed'
+                    }`}
+                  >
+                    <span className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${
+                      isGenerating ? 'bg-accent/30' : isCompleted ? 'bg-accent-foreground/20' : isCurrent ? 'bg-accent/30' : 'bg-muted'
+                    }`}>
+                      {isGenerating ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : (
+                        i + 1
+                      )}
+                    </span>
+                    {isGenerating ? "Generating..." : s.label}
+                  </button>
+                  {i < WORKFLOW_STEPS.length - 1 && (
+                    <div className={`h-0.5 flex-1 min-w-[20px] ${isCompleted ? 'bg-accent' : 'bg-border'}`} />
+                  )}
+                </div>
+              )
+            })}
           </div>
 
-          {/* Mobile Step Indicator */}
-          <div className="lg:hidden">
-            <div className="flex items-center gap-2 overflow-x-auto pb-2">
-              {WORKFLOW_STEPS.map((s, i) => {
-                const isClickable = completedSteps.includes(s.id) || getCurrentWorkflowStep() === s.id
-                return (
-                  <div key={s.id} className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => isClickable && handleStepClick(s.id)}
-                      disabled={!isClickable}
-                      className={`px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-all ${
-                        completedSteps.includes(s.id) 
-                          ? 'bg-accent text-accent-foreground cursor-pointer hover:bg-accent/80' 
-                          : getCurrentWorkflowStep() === s.id
-                          ? 'bg-accent/20 text-accent border border-accent cursor-pointer'
-                          : 'bg-secondary text-muted-foreground cursor-not-allowed'
-                      }`}
-                    >
-                      {s.label}
-                    </button>
-                    {i < WORKFLOW_STEPS.length - 1 && (
-                      <div className={`w-4 h-0.5 ${completedSteps.includes(s.id) ? 'bg-accent' : 'bg-border'}`} />
-                    )}
-                  </div>
-                )
-              })}
-            </div>
-          </div>
-
-          {/* Content Area */}
-          <div className="space-y-8">
+          {/* Content Area - Full Width */}
+          <div className="space-y-6">
             {/* Step: Analyzing */}
             {step === "analyzing" && (
               <Card className="bg-card border-border">
@@ -1228,45 +1237,53 @@ export default function RemixPage() {
                 )}
 
                 {/* User Modification Input */}
-                <Card className="bg-card border-border">
+                <Card className="bg-card border-border relative z-20">
                   <CardHeader>
                     <CardTitle className="text-foreground">Describe Your Remix Vision</CardTitle>
                   </CardHeader>
                   <CardContent className="space-y-4">
+                    {apiError && (
+                      <div className="p-3 bg-red-500/10 border border-red-500/30 rounded-lg">
+                        <p className="text-red-500 text-sm">{apiError}</p>
+                      </div>
+                    )}
                     <Textarea
                       placeholder="Based on the analysis above, describe what kind of remix you want to create. E.g., 'Create a 60-second highlight reel for Instagram with upbeat music and text overlays highlighting the emotional journey...'"
                       value={userModifications}
-                      onChange={(e) => setUserModifications(e.target.value)}
+                      onChange={(e) => {
+                        setUserModifications(e.target.value)
+                        if (apiError) setApiError(null)
+                      }}
                       rows={4}
-                      className="resize-none bg-secondary border-border"
+                      className="resize-none bg-secondary border-border relative z-20"
                     />
                     <Button
-                      onClick={handleGenerateScript}
-                      disabled={!userModifications.trim()}
-                      className="w-full bg-accent text-accent-foreground hover:bg-accent/90"
+                      type="button"
+                      onClick={(e) => {
+                        e.preventDefault()
+                        e.stopPropagation()
+                        console.log("Generate Script button clicked, userModifications:", userModifications)
+                        handleGenerateScript()
+                      }}
+                      disabled={step === "generating"}
+                      className="w-full bg-accent text-accent-foreground hover:bg-accent/90 relative z-20"
                       size="lg"
                     >
-                      <Sparkles className="w-4 h-4 mr-2" />
-                      Generate Remix Script
+                      {step === "generating" ? (
+                        <>
+                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                          Generating...
+                        </>
+                      ) : (
+                        <>
+                          <Sparkles className="w-4 h-4 mr-2" />
+                          Generate Remix Script
+                        </>
+                      )}
                     </Button>
                   </CardContent>
                 </Card>
               </div>
-            )}
-
-            {/* Step: Generating Script */}
-            {step === "generating" && (
-              <Card className="bg-card border-border">
-                <CardContent className="flex flex-col items-center justify-center py-16">
-                  <Loader2 className="w-12 h-12 text-accent animate-spin mb-4" />
-                  <h3 className="text-lg font-semibold text-foreground mb-2">
-                    Generating Remix Script
-                  </h3>
-                  <p className="text-muted-foreground text-center max-w-md">
-                    Creating a customized script based on your requirements and the video analysis...
-                  </p>
-                </CardContent>
-              </Card>
             )}
 
             {/* Step: Script */}

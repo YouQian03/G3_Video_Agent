@@ -61,6 +61,22 @@ import {
   pollGenerateViewsStatus,
   getEntityState,
   type EntityState,
+  // Visual Style APIs
+  getVisualStyle,
+  saveVisualStyle,
+  uploadReferenceImage,
+  deleteReferenceImage,
+  // Product APIs
+  getProducts,
+  createProduct,
+  updateProduct,
+  deleteProduct,
+  uploadProductView,
+  generateProductViews,
+  pollProductGenerationStatus,
+  getProductState,
+  type VisualStyleConfig,
+  type ProductAnchor,
 } from "@/lib/api"
 
 // Character/Environment Entity from Character Ledger (Video Analysis)
@@ -108,11 +124,15 @@ function SoundDesignSection({
   onSoundDesignChange,
   onConfirm,
   onCancel,
+  isConfirmed,
+  onEdit,
 }: {
   soundDesign: SoundDesign
   onSoundDesignChange: (updates: Partial<SoundDesign>) => void
   onConfirm: () => void
   onCancel: () => void
+  isConfirmed: boolean
+  onEdit: () => void
 }) {
   const voiceSampleRef = useRef<HTMLInputElement>(null)
   const musicSampleRef = useRef<HTMLInputElement>(null)
@@ -120,7 +140,6 @@ function SoundDesignSection({
   const handleVoiceSampleUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (file) {
-      // For now, just create a local URL - in production, this would upload to server
       const url = URL.createObjectURL(file)
       onSoundDesignChange({ voiceSampleUrl: url })
     }
@@ -134,22 +153,63 @@ function SoundDesignSection({
     }
   }
 
-  // Show buttons when any sample is uploaded
-  const hasUploads = soundDesign.voiceSampleUrl || soundDesign.musicSampleUrl
+  // Confirmed read-only view
+  if (isConfirmed) {
+    return (
+      <Card className="bg-card border-accent">
+        <CardContent className="p-4">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <Music className="w-5 h-5 text-accent" />
+              <span className="text-base font-semibold text-foreground">Sound Design</span>
+              <CheckCircle className="w-4 h-4 text-accent" />
+            </div>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={onEdit}
+              className="h-8 w-8 text-muted-foreground hover:text-accent hover:bg-accent/10"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>
+            </Button>
+          </div>
+          <div className="grid grid-cols-2 gap-x-6 gap-y-2">
+            <div>
+              <p className="text-xs text-muted-foreground">Voice Style</p>
+              <p className="text-sm text-foreground">{soundDesign.voiceStyle || "-"}</p>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground">Voice Tone</p>
+              <p className="text-sm text-foreground">{soundDesign.voiceTone || "-"}</p>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground">Background Music</p>
+              <p className="text-sm text-foreground">{soundDesign.backgroundMusic || "-"}</p>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground">Sound Effects</p>
+              <p className="text-sm text-foreground">{soundDesign.soundEffects || "-"}</p>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+    )
+  }
 
+  // Edit mode
   return (
     <Card className="bg-card border-border">
-      <CardHeader className="pb-3">
-        <div className="flex items-center gap-2">
+      <CardContent className="p-6">
+        <div className="flex items-center gap-2 mb-6">
           <Music className="w-5 h-5 text-accent" />
-          <CardTitle className="text-base text-foreground">Sound Design</CardTitle>
+          <span className="text-base font-semibold text-foreground">Sound Design</span>
+          <CheckCircle className="w-5 h-5 text-accent/50" />
         </div>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        <div className="grid grid-cols-2 gap-4">
+
+        <div className="grid grid-cols-2 gap-4 mb-4">
           {/* Voice Style */}
           <div className="space-y-2">
-            <Label htmlFor="voiceStyle" className="text-sm text-foreground">Voice Style</Label>
+            <Label htmlFor="voiceStyle" className="text-sm text-muted-foreground">Voice Style</Label>
             <Input
               id="voiceStyle"
               value={soundDesign.voiceStyle}
@@ -161,7 +221,7 @@ function SoundDesignSection({
 
           {/* Voice Tone */}
           <div className="space-y-2">
-            <Label htmlFor="voiceTone" className="text-sm text-foreground">Voice Tone</Label>
+            <Label htmlFor="voiceTone" className="text-sm text-muted-foreground">Voice Tone</Label>
             <Input
               id="voiceTone"
               value={soundDesign.voiceTone}
@@ -173,7 +233,7 @@ function SoundDesignSection({
 
           {/* Background Music */}
           <div className="space-y-2">
-            <Label htmlFor="backgroundMusic" className="text-sm text-foreground">Background Music</Label>
+            <Label htmlFor="backgroundMusic" className="text-sm text-muted-foreground">Background Music</Label>
             <Input
               id="backgroundMusic"
               value={soundDesign.backgroundMusic}
@@ -185,7 +245,7 @@ function SoundDesignSection({
 
           {/* Sound Effects */}
           <div className="space-y-2">
-            <Label htmlFor="soundEffects" className="text-sm text-foreground">Sound Effects</Label>
+            <Label htmlFor="soundEffects" className="text-sm text-muted-foreground">Sound Effects</Label>
             <Input
               id="soundEffects"
               value={soundDesign.soundEffects}
@@ -197,10 +257,10 @@ function SoundDesignSection({
         </div>
 
         {/* Sample Uploads */}
-        <div className="grid grid-cols-2 gap-4 pt-2">
+        <div className="grid grid-cols-2 gap-4 mb-4">
           {/* Voice Sample */}
           <div className="space-y-2">
-            <Label className="text-sm text-foreground">Voice Sample</Label>
+            <Label className="text-sm text-muted-foreground">Voice Sample (optional)</Label>
             <div
               onClick={() => voiceSampleRef.current?.click()}
               className={cn(
@@ -213,13 +273,12 @@ function SoundDesignSection({
               {soundDesign.voiceSampleUrl ? (
                 <div className="flex items-center justify-center gap-2">
                   <CheckCircle className="w-4 h-4 text-accent" />
-                  <span className="text-sm text-foreground">Voice sample uploaded</span>
+                  <span className="text-sm text-accent">Audio uploaded</span>
                 </div>
               ) : (
                 <div className="flex flex-col items-center gap-1">
                   <Upload className="w-5 h-5 text-muted-foreground" />
-                  <span className="text-sm text-muted-foreground">Upload voice sample</span>
-                  <span className="text-xs text-muted-foreground">MP3 up to 10MB</span>
+                  <span className="text-sm text-muted-foreground">Upload sample</span>
                 </div>
               )}
               <input
@@ -234,7 +293,7 @@ function SoundDesignSection({
 
           {/* Music Sample */}
           <div className="space-y-2">
-            <Label className="text-sm text-foreground">Music Sample</Label>
+            <Label className="text-sm text-muted-foreground">Music Sample (optional)</Label>
             <div
               onClick={() => musicSampleRef.current?.click()}
               className={cn(
@@ -247,13 +306,12 @@ function SoundDesignSection({
               {soundDesign.musicSampleUrl ? (
                 <div className="flex items-center justify-center gap-2">
                   <CheckCircle className="w-4 h-4 text-accent" />
-                  <span className="text-sm text-foreground">Music sample uploaded</span>
+                  <span className="text-sm text-accent">Audio uploaded</span>
                 </div>
               ) : (
                 <div className="flex flex-col items-center gap-1">
                   <Upload className="w-5 h-5 text-muted-foreground" />
-                  <span className="text-sm text-muted-foreground">Upload music sample</span>
-                  <span className="text-xs text-muted-foreground">MP3 up to 10MB</span>
+                  <span className="text-sm text-muted-foreground">Upload sample</span>
                 </div>
               )}
               <input
@@ -267,26 +325,24 @@ function SoundDesignSection({
           </div>
         </div>
 
-        {/* Confirm / Cancel Buttons - shown when uploads exist */}
-        {hasUploads && (
-          <div className="flex justify-end gap-3 pt-2">
-            <Button
-              variant="outline"
-              onClick={onCancel}
-              className="border-border text-foreground hover:bg-secondary bg-transparent"
-            >
-              <X className="w-4 h-4 mr-2" />
-              Cancel
-            </Button>
-            <Button
-              onClick={onConfirm}
-              className="bg-accent text-accent-foreground hover:bg-accent/90"
-            >
-              <Check className="w-4 h-4 mr-2" />
-              Confirm Sound
-            </Button>
-          </div>
-        )}
+        {/* Confirm / Cancel Buttons */}
+        <div className="flex justify-end gap-3">
+          <Button
+            variant="outline"
+            onClick={onCancel}
+            className="border-border text-foreground hover:bg-secondary bg-transparent"
+          >
+            <X className="w-4 h-4 mr-2" />
+            Cancel
+          </Button>
+          <Button
+            onClick={onConfirm}
+            className="bg-accent text-accent-foreground hover:bg-accent/90"
+          >
+            <Check className="w-4 h-4 mr-2" />
+            Confirm Sound
+          </Button>
+        </div>
       </CardContent>
     </Card>
   )
@@ -294,52 +350,149 @@ function SoundDesignSection({
 
 // Visual Style Section Component
 function VisualStyleSection({
+  jobId,
   visualStyle,
   onVisualStyleChange,
   onConfirm,
   onCancel,
+  isConfirmed,
+  onEdit,
 }: {
+  jobId: string
   visualStyle: VisualStyle
   onVisualStyleChange: (updates: Partial<VisualStyle>) => void
   onConfirm: () => void
   onCancel: () => void
+  isConfirmed: boolean
+  onEdit: () => void
 }) {
   const referenceInputRef = useRef<HTMLInputElement>(null)
+  const [isUploading, setIsUploading] = useState(false)
+  const [isSaving, setIsSaving] = useState(false)
 
-  const handleReferenceUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleReferenceUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files
-    if (files) {
-      const newUrls = Array.from(files).map((file) => URL.createObjectURL(file))
-      onVisualStyleChange({
-        referenceImages: [...visualStyle.referenceImages, ...newUrls]
-      })
+    if (files && files.length > 0) {
+      setIsUploading(true)
+      try {
+        const newUrls: string[] = []
+        for (const file of Array.from(files)) {
+          const result = await uploadReferenceImage(jobId, file)
+          newUrls.push(result.url)
+        }
+        onVisualStyleChange({
+          referenceImages: [...visualStyle.referenceImages, ...newUrls]
+        })
+      } catch (error) {
+        console.error("Failed to upload reference images:", error)
+      } finally {
+        setIsUploading(false)
+      }
     }
     if (referenceInputRef.current) {
       referenceInputRef.current.value = ""
     }
   }
 
-  const removeReferenceImage = (index: number) => {
+  const removeReferenceImage = async (index: number) => {
+    try {
+      await deleteReferenceImage(jobId, index)
+    } catch (error) {
+      console.error("Failed to delete reference image:", error)
+    }
     const newImages = visualStyle.referenceImages.filter((_, i) => i !== index)
     onVisualStyleChange({ referenceImages: newImages })
   }
 
-  // Show buttons when reference images are uploaded
-  const hasUploads = visualStyle.referenceImages.length > 0
+  const handleConfirmClick = async () => {
+    setIsSaving(true)
+    try {
+      await saveVisualStyle(jobId, {
+        artStyle: visualStyle.artStyle,
+        colorPalette: visualStyle.colorPalette,
+        lightingMood: visualStyle.lightingMood,
+        cameraStyle: visualStyle.cameraStyle,
+        referenceImages: visualStyle.referenceImages,
+        confirmed: true,
+      })
+      onConfirm()
+    } catch (error) {
+      console.error("Failed to save visual style:", error)
+    } finally {
+      setIsSaving(false)
+    }
+  }
 
+  // Confirmed read-only view
+  if (isConfirmed) {
+    return (
+      <Card className="bg-card border-accent">
+        <CardContent className="p-4">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <Palette className="w-5 h-5 text-accent" />
+              <span className="text-base font-semibold text-foreground">Visual Style</span>
+              <CheckCircle className="w-4 h-4 text-accent" />
+            </div>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={onEdit}
+              className="h-8 w-8 text-muted-foreground hover:text-accent hover:bg-accent/10"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>
+            </Button>
+          </div>
+          <div className="grid grid-cols-2 gap-x-6 gap-y-2 mb-3">
+            <div>
+              <p className="text-xs text-muted-foreground">Art Style</p>
+              <p className="text-sm text-foreground">{visualStyle.artStyle || "-"}</p>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground">Color Palette</p>
+              <p className="text-sm text-foreground">{visualStyle.colorPalette || "-"}</p>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground">Lighting Mood</p>
+              <p className="text-sm text-foreground">{visualStyle.lightingMood || "-"}</p>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground">Camera Style</p>
+              <p className="text-sm text-foreground">{visualStyle.cameraStyle || "-"}</p>
+            </div>
+          </div>
+          {/* Show reference images in read-only */}
+          {visualStyle.referenceImages.length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              {visualStyle.referenceImages.map((url, index) => (
+                <img
+                  key={index}
+                  src={url}
+                  alt={`Reference ${index + 1}`}
+                  className="w-12 h-12 object-cover rounded border border-border"
+                />
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    )
+  }
+
+  // Edit mode
   return (
     <Card className="bg-card border-border">
-      <CardHeader className="pb-3">
-        <div className="flex items-center gap-2">
+      <CardContent className="p-6">
+        <div className="flex items-center gap-2 mb-6">
           <Palette className="w-5 h-5 text-accent" />
-          <CardTitle className="text-base text-foreground">Visual Style</CardTitle>
+          <span className="text-base font-semibold text-foreground">Visual Style</span>
+          <CheckCircle className="w-5 h-5 text-accent/50" />
         </div>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        <div className="grid grid-cols-2 gap-4">
+
+        <div className="grid grid-cols-2 gap-4 mb-4">
           {/* Art Style */}
           <div className="space-y-2">
-            <Label htmlFor="artStyle" className="text-sm text-foreground">Art Style</Label>
+            <Label htmlFor="artStyle" className="text-sm text-muted-foreground">Art Style</Label>
             <Input
               id="artStyle"
               value={visualStyle.artStyle}
@@ -351,7 +504,7 @@ function VisualStyleSection({
 
           {/* Color Palette */}
           <div className="space-y-2">
-            <Label htmlFor="colorPalette" className="text-sm text-foreground">Color Palette</Label>
+            <Label htmlFor="colorPalette" className="text-sm text-muted-foreground">Color Palette</Label>
             <Input
               id="colorPalette"
               value={visualStyle.colorPalette}
@@ -363,7 +516,7 @@ function VisualStyleSection({
 
           {/* Lighting Mood */}
           <div className="space-y-2">
-            <Label htmlFor="lightingMood" className="text-sm text-foreground">Lighting Mood</Label>
+            <Label htmlFor="lightingMood" className="text-sm text-muted-foreground">Lighting Mood</Label>
             <Input
               id="lightingMood"
               value={visualStyle.lightingMood}
@@ -375,7 +528,7 @@ function VisualStyleSection({
 
           {/* Camera Style */}
           <div className="space-y-2">
-            <Label htmlFor="cameraStyle" className="text-sm text-foreground">Camera Style</Label>
+            <Label htmlFor="cameraStyle" className="text-sm text-muted-foreground">Camera Style</Label>
             <Input
               id="cameraStyle"
               value={visualStyle.cameraStyle}
@@ -387,19 +540,33 @@ function VisualStyleSection({
         </div>
 
         {/* Reference Images */}
-        <div className="space-y-2 pt-2">
-          <Label className="text-sm text-foreground">Reference Images</Label>
-          <div
-            onClick={() => referenceInputRef.current?.click()}
-            className="border-2 border-dashed border-border rounded-lg p-6 text-center cursor-pointer hover:border-accent hover:bg-secondary/50 transition-all"
-          >
-            <Upload className="w-8 h-8 text-muted-foreground mx-auto mb-2" />
-            <p className="text-sm text-muted-foreground">
-              Click to upload reference images
-            </p>
-            <p className="text-xs text-muted-foreground mt-1">
-              PNG, JPG up to 10MB each
-            </p>
+        <div className="space-y-2 mb-4">
+          <Label className="text-sm text-muted-foreground">Reference Images (optional)</Label>
+          <div className="flex flex-wrap gap-2">
+            {visualStyle.referenceImages.map((url, index) => (
+              <div key={index} className="relative group">
+                <img
+                  src={url}
+                  alt={`Reference ${index + 1}`}
+                  className="w-20 h-20 object-cover rounded-lg border border-border"
+                />
+                <button
+                  type="button"
+                  onClick={() => removeReferenceImage(index)}
+                  className="absolute -top-2 -right-2 w-5 h-5 bg-red-500 text-white rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              </div>
+            ))}
+            {/* Add button */}
+            <div
+              onClick={() => referenceInputRef.current?.click()}
+              className="w-20 h-20 border-2 border-dashed border-border rounded-lg flex flex-col items-center justify-center cursor-pointer hover:border-accent hover:bg-secondary/50 transition-all"
+            >
+              <span className="text-2xl text-muted-foreground">+</span>
+              <span className="text-xs text-muted-foreground">Add</span>
+            </div>
             <input
               ref={referenceInputRef}
               type="file"
@@ -409,50 +576,37 @@ function VisualStyleSection({
               className="hidden"
             />
           </div>
-
-          {/* Show uploaded reference images */}
-          {visualStyle.referenceImages.length > 0 && (
-            <div className="flex flex-wrap gap-2 mt-3">
-              {visualStyle.referenceImages.map((url, index) => (
-                <div key={index} className="relative group">
-                  <img
-                    src={url}
-                    alt={`Reference ${index + 1}`}
-                    className="w-20 h-20 object-cover rounded-lg border border-border"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => removeReferenceImage(index)}
-                    className="absolute -top-2 -right-2 w-5 h-5 bg-red-500 text-white rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
-                  >
-                    <X className="w-3 h-3" />
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
         </div>
 
-        {/* Confirm / Cancel Buttons - shown when reference images uploaded */}
-        {hasUploads && (
-          <div className="flex justify-end gap-3 pt-2">
-            <Button
-              variant="outline"
-              onClick={onCancel}
-              className="border-border text-foreground hover:bg-secondary bg-transparent"
-            >
-              <X className="w-4 h-4 mr-2" />
-              Cancel
-            </Button>
-            <Button
-              onClick={onConfirm}
-              className="bg-accent text-accent-foreground hover:bg-accent/90"
-            >
-              <Check className="w-4 h-4 mr-2" />
-              Confirm Style
-            </Button>
-          </div>
-        )}
+        {/* Confirm / Cancel Buttons */}
+        <div className="flex justify-end gap-3">
+          <Button
+            variant="outline"
+            onClick={onCancel}
+            disabled={isSaving}
+            className="border-border text-foreground hover:bg-secondary bg-transparent"
+          >
+            <X className="w-4 h-4 mr-2" />
+            Cancel
+          </Button>
+          <Button
+            onClick={handleConfirmClick}
+            disabled={isSaving}
+            className="bg-accent text-accent-foreground hover:bg-accent/90"
+          >
+            {isSaving ? (
+              <>
+                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                Saving...
+              </>
+            ) : (
+              <>
+                <Check className="w-4 h-4 mr-2" />
+                Confirm Style
+              </>
+            )}
+          </Button>
+        </div>
       </CardContent>
     </Card>
   )
@@ -464,31 +618,38 @@ function ProductCard({
   product,
   onUpdate,
   onDelete,
+  onNameChange,
 }: {
   jobId: string
   product: ProductView
   onUpdate: (updates: Partial<ProductView>) => void
   onDelete: () => void
+  onNameChange: (name: string) => Promise<void>
 }) {
   const [isGenerating, setIsGenerating] = useState(false)
   const [uploadingView, setUploadingView] = useState<string | null>(null)
   const [localDescription, setLocalDescription] = useState(product.description)
+  const [localName, setLocalName] = useState(product.name)
+  const [isSavingDescription, setIsSavingDescription] = useState(false)
 
   useEffect(() => {
     setLocalDescription(product.description)
   }, [product.description])
 
+  useEffect(() => {
+    setLocalName(product.name)
+  }, [product.name])
+
   const handleImageUpload = async (view: 'front' | 'side' | 'back', file: File) => {
     setUploadingView(view)
     try {
-      // For now, create local URL - in production would upload to server
-      const url = URL.createObjectURL(file)
+      const result = await uploadProductView(jobId, product.id, view, file)
       const viewMap: Record<string, string> = {
         front: 'frontView',
         side: 'sideView',
         back: 'backView'
       }
-      onUpdate({ [viewMap[view]]: url })
+      onUpdate({ [viewMap[view]]: result.url })
     } catch (error) {
       console.error("Upload failed:", error)
     } finally {
@@ -496,17 +657,68 @@ function ProductCard({
     }
   }
 
-  const handleAIGenerate = async () => {
+  const handleDescriptionBlur = async () => {
+    if (localDescription !== product.description) {
+      setIsSavingDescription(true)
+      try {
+        await updateProduct(jobId, product.id, { description: localDescription })
+        onUpdate({ description: localDescription })
+      } catch (error) {
+        console.error("Failed to save description:", error)
+      } finally {
+        setIsSavingDescription(false)
+      }
+    }
+  }
+
+  const handleNameBlur = async () => {
+    if (localName !== product.name && localName.trim()) {
+      try {
+        await onNameChange(localName)
+      } catch (error) {
+        console.error("Failed to save name:", error)
+        setLocalName(product.name) // Revert on error
+      }
+    }
+  }
+
+  const handleAIGenerate = async (forceRegenerate: boolean = false) => {
     setIsGenerating(true)
-    // Simulate AI generation - in production would call backend
-    await new Promise(resolve => setTimeout(resolve, 2000))
-    onUpdate({
-      frontView: '/placeholder-product-front.png',
-      sideView: '/placeholder-product-side.png',
-      backView: '/placeholder-product-back.png',
-      confirmed: true
-    })
-    setIsGenerating(false)
+    try {
+      // Save description first
+      if (localDescription !== product.description) {
+        await updateProduct(jobId, product.id, { description: localDescription })
+        onUpdate({ description: localDescription })
+      }
+
+      // Trigger AI generation
+      await generateProductViews(jobId, product.id, forceRegenerate)
+
+      // Poll for completion
+      await pollProductGenerationStatus(
+        jobId,
+        product.id,
+        (status) => {
+          console.log("Product generation status:", status.status)
+        },
+        3000,
+        40
+      )
+
+      // Fetch updated state
+      const updatedState = await getProductState(jobId, product.id)
+      const cacheBuster = `?t=${Date.now()}`
+      onUpdate({
+        frontView: updatedState.threeViews.front?.url ? updatedState.threeViews.front.url + cacheBuster : undefined,
+        sideView: updatedState.threeViews.side?.url ? updatedState.threeViews.side.url + cacheBuster : undefined,
+        backView: updatedState.threeViews.back?.url ? updatedState.threeViews.back.url + cacheBuster : undefined,
+        confirmed: true
+      })
+    } catch (error) {
+      console.error("AI generation failed:", error)
+    } finally {
+      setIsGenerating(false)
+    }
   }
 
   const handleConfirm = () => {
@@ -525,10 +737,12 @@ function ProductCard({
           <div className="flex items-center gap-2">
             <Package className="w-5 h-5 text-accent" />
             <Input
-              value={product.name}
-              onChange={(e) => onUpdate({ name: e.target.value })}
+              value={localName}
+              onChange={(e) => setLocalName(e.target.value)}
+              onBlur={handleNameBlur}
               placeholder="Product Name"
               className="bg-transparent border-none p-0 h-auto text-base font-semibold focus-visible:ring-0"
+              disabled={isGenerating}
             />
             {product.confirmed && (
               <CheckCircle className="w-4 h-4 text-accent" />
@@ -546,7 +760,7 @@ function ProductCard({
       </CardHeader>
       <CardContent className="space-y-4">
         {/* Three View Slots */}
-        <div className="flex justify-center gap-4">
+        <div className="flex justify-between gap-3 px-2">
           <ViewUploadSlot
             label="Front"
             imageUrl={product.frontView}
@@ -573,10 +787,8 @@ function ProductCard({
         {/* Description */}
         <Textarea
           value={localDescription}
-          onChange={(e) => {
-            setLocalDescription(e.target.value)
-            onUpdate({ description: e.target.value })
-          }}
+          onChange={(e) => setLocalDescription(e.target.value)}
+          onBlur={handleDescriptionBlur}
           placeholder="Product description for AI generation..."
           className="bg-secondary border-border text-foreground min-h-[80px] text-sm"
           disabled={isGenerating}
@@ -587,7 +799,7 @@ function ProductCard({
           <Button
             variant="outline"
             size="sm"
-            onClick={handleAIGenerate}
+            onClick={() => handleAIGenerate(!!allViewsFilled)}
             disabled={isGenerating || !localDescription.trim()}
             className="border-accent text-accent hover:bg-accent/10 bg-transparent"
           >
@@ -595,6 +807,11 @@ function ProductCard({
               <>
                 <Loader2 className="w-4 h-4 mr-1 animate-spin" />
                 Generating...
+              </>
+            ) : allViewsFilled ? (
+              <>
+                <Sparkles className="w-4 h-4 mr-1" />
+                Regenerate
               </>
             ) : (
               <>
@@ -629,24 +846,44 @@ function ProductThreeViewsSection({
   products: ProductView[]
   onProductsChange: (products: ProductView[]) => void
 }) {
-  const addProduct = () => {
-    const newProduct: ProductView = {
-      id: `product_${Date.now()}`,
-      name: "",
-      description: "",
-      confirmed: false,
+  const [isAdding, setIsAdding] = useState(false)
+
+  const addProductHandler = async () => {
+    setIsAdding(true)
+    try {
+      const result = await createProduct(jobId, "New Product", "")
+      const newProduct: ProductView = {
+        id: result.product.anchorId,
+        name: result.product.name,
+        description: result.product.description || "",
+        confirmed: false,
+      }
+      onProductsChange([...products, newProduct])
+    } catch (error) {
+      console.error("Failed to create product:", error)
+    } finally {
+      setIsAdding(false)
     }
-    onProductsChange([...products, newProduct])
   }
 
-  const updateProduct = (id: string, updates: Partial<ProductView>) => {
+  const updateProductLocal = (id: string, updates: Partial<ProductView>) => {
     onProductsChange(
       products.map((p) => (p.id === id ? { ...p, ...updates } : p))
     )
   }
 
-  const deleteProduct = (id: string) => {
-    onProductsChange(products.filter((p) => p.id !== id))
+  const updateProductName = async (id: string, name: string) => {
+    await updateProduct(jobId, id, { name })
+    updateProductLocal(id, { name })
+  }
+
+  const deleteProductHandler = async (id: string) => {
+    try {
+      await deleteProduct(jobId, id)
+      onProductsChange(products.filter((p) => p.id !== id))
+    } catch (error) {
+      console.error("Failed to delete product:", error)
+    }
   }
 
   return (
@@ -662,11 +899,21 @@ function ProductThreeViewsSection({
         <Button
           variant="outline"
           size="sm"
-          onClick={addProduct}
+          onClick={addProductHandler}
+          disabled={isAdding}
           className="border-accent text-accent hover:bg-accent/10 bg-transparent"
         >
-          <Package className="w-4 h-4 mr-1" />
-          Add Product
+          {isAdding ? (
+            <>
+              <Loader2 className="w-4 h-4 mr-1 animate-spin" />
+              Adding...
+            </>
+          ) : (
+            <>
+              <Package className="w-4 h-4 mr-1" />
+              Add Product
+            </>
+          )}
         </Button>
       </div>
 
@@ -678,10 +925,11 @@ function ProductThreeViewsSection({
             <Button
               variant="outline"
               size="sm"
-              onClick={addProduct}
+              onClick={addProductHandler}
+              disabled={isAdding}
               className="mt-4 border-accent text-accent hover:bg-accent/10 bg-transparent"
             >
-              Add First Product
+              {isAdding ? "Adding..." : "Add First Product"}
             </Button>
           </CardContent>
         </Card>
@@ -692,8 +940,9 @@ function ProductThreeViewsSection({
               key={product.id}
               jobId={jobId}
               product={product}
-              onUpdate={(updates) => updateProduct(product.id, updates)}
-              onDelete={() => deleteProduct(product.id)}
+              onUpdate={(updates) => updateProductLocal(product.id, updates)}
+              onDelete={() => deleteProductHandler(product.id)}
+              onNameChange={(name) => updateProductName(product.id, name)}
             />
           ))}
         </div>
@@ -735,21 +984,21 @@ function ViewUploadSlot({
   }
 
   return (
-    <div className="flex flex-col items-center gap-2">
+    <div className="flex flex-col items-center gap-2 flex-1">
       <button
         type="button"
         onClick={handleClick}
         disabled={disabled || isLoading}
         className={cn(
-          "w-24 h-32 rounded-lg border-2 border-dashed flex flex-col items-center justify-center gap-2 transition-all",
+          "w-full aspect-[3/4] min-w-[100px] max-w-[160px] rounded-lg border-2 border-dashed flex flex-col items-center justify-center gap-2 transition-all",
           imageUrl
-            ? "border-accent bg-accent/10"
+            ? "border-accent bg-accent/10 p-0"
             : "border-border hover:border-accent hover:bg-secondary/50",
           (disabled || isLoading) && "opacity-50 cursor-not-allowed"
         )}
       >
         {isLoading ? (
-          <Loader2 className="w-6 h-6 text-accent animate-spin" />
+          <Loader2 className="w-8 h-8 text-accent animate-spin" />
         ) : imageUrl ? (
           <img
             src={imageUrl}
@@ -758,12 +1007,12 @@ function ViewUploadSlot({
           />
         ) : (
           <>
-            <ImageIcon className="w-6 h-6 text-muted-foreground" />
-            <Upload className="w-4 h-4 text-muted-foreground" />
+            <ImageIcon className="w-8 h-8 text-muted-foreground" />
+            <Upload className="w-5 h-5 text-muted-foreground" />
           </>
         )}
       </button>
-      <span className="text-xs text-muted-foreground">{label}</span>
+      <span className="text-sm text-muted-foreground font-medium">{label}</span>
       <input
         ref={inputRef}
         type="file"
@@ -896,7 +1145,7 @@ function CharacterCard({
       </CardHeader>
       <CardContent className="space-y-4">
         {/* Three View Slots */}
-        <div className="flex justify-center gap-4">
+        <div className="flex justify-between gap-3 px-2">
           <ViewUploadSlot
             label="Front"
             imageUrl={character.frontView}
@@ -1093,7 +1342,7 @@ function SceneCard({
       </CardHeader>
       <CardContent className="space-y-4">
         {/* Three View Slots */}
-        <div className="flex justify-center gap-4">
+        <div className="flex justify-between gap-3 px-2">
           <ViewUploadSlot
             label="Wide"
             imageUrl={scene.establishingShot}
@@ -1169,30 +1418,6 @@ function SceneCard({
   )
 }
 
-// Helper function to find matching anchor for a ledger entity
-function findMatchingAnchor(
-  entity: LedgerEntity,
-  anchors: IdentityAnchor[]
-): IdentityAnchor | undefined {
-  // First try to match by originalPlaceholder -> entityId
-  const byPlaceholder = anchors.find(
-    (anchor) => anchor.originalPlaceholder === entity.entityId
-  )
-  if (byPlaceholder) return byPlaceholder
-
-  // Fallback: match by name similarity (case-insensitive contains)
-  const entityNameLower = entity.displayName.toLowerCase()
-  const byName = anchors.find((anchor) => {
-    const anchorName = (anchor.anchorName || anchor.name || "").toLowerCase()
-    return (
-      anchorName.includes(entityNameLower) ||
-      entityNameLower.includes(anchorName) ||
-      anchorName === entityNameLower
-    )
-  })
-  return byName
-}
-
 export function CharacterSceneViews({
   jobId,
   characterLedger,
@@ -1214,6 +1439,7 @@ export function CharacterSceneViews({
     soundEffects: "Subtle, ambient",
   })
   const [soundDesignConfirmed, setSoundDesignConfirmed] = useState(false)
+  const [soundDesignEditing, setSoundDesignEditing] = useState(true)
 
   // Visual Style State
   const [visualStyle, setVisualStyle] = useState<VisualStyle>({
@@ -1224,6 +1450,7 @@ export function CharacterSceneViews({
     referenceImages: [],
   })
   const [visualStyleConfirmed, setVisualStyleConfirmed] = useState(false)
+  const [visualStyleEditing, setVisualStyleEditing] = useState(true)
 
   // Products State
   const [products, setProducts] = useState<ProductView[]>([])
@@ -1240,9 +1467,10 @@ export function CharacterSceneViews({
     setVisualStyleConfirmed(false)
   }
 
-  // Sound Design confirm/cancel handlers
+  // Sound Design confirm/cancel/edit handlers
   const handleSoundDesignConfirm = () => {
     setSoundDesignConfirmed(true)
+    setSoundDesignEditing(false)
     console.log("Sound design confirmed:", soundDesign)
   }
 
@@ -1255,9 +1483,15 @@ export function CharacterSceneViews({
     }))
   }
 
-  // Visual Style confirm/cancel handlers
+  const handleSoundDesignEdit = () => {
+    setSoundDesignEditing(true)
+    setSoundDesignConfirmed(false)
+  }
+
+  // Visual Style confirm/cancel/edit handlers
   const handleVisualStyleConfirm = () => {
     setVisualStyleConfirmed(true)
+    setVisualStyleEditing(false)
     console.log("Visual style confirmed:", visualStyle)
   }
 
@@ -1269,88 +1503,149 @@ export function CharacterSceneViews({
     }))
   }
 
-  // Initialize characters: Ledger (complete list) + Anchors (overrides)
-  // Merge logic: All entities from ledger are shown, anchors provide description updates
+  const handleVisualStyleEdit = () => {
+    setVisualStyleEditing(true)
+    setVisualStyleConfirmed(false)
+  }
+
+  // Load Visual Style from backend
   useEffect(() => {
-    if (characters.length === 0 && characterLedger.length > 0) {
-      const initialChars: CharacterView[] = characterLedger.map((entity) => {
-        // Check if there's a matching anchor with updated description
-        const matchingAnchor = findMatchingAnchor(entity, characterAnchors)
+    const loadVisualStyle = async () => {
+      try {
+        const response = await getVisualStyle(jobId)
+        if (response.visualStyle) {
+          setVisualStyle({
+            artStyle: response.visualStyle.artStyle || "",
+            colorPalette: response.visualStyle.colorPalette || "",
+            lightingMood: response.visualStyle.lightingMood || "",
+            cameraStyle: response.visualStyle.cameraStyle || "",
+            referenceImages: response.visualStyle.referenceImages || [],
+          })
+          setVisualStyleConfirmed(response.visualStyle.confirmed || false)
+        }
+      } catch (error) {
+        console.error("Failed to load visual style:", error)
+      }
+    }
+    if (jobId) {
+      loadVisualStyle()
+    }
+  }, [jobId])
 
-        // Use anchor's description if available (remix override), otherwise use ledger's
-        const description = matchingAnchor?.detailedDescription
-          || entity.detailedDescription
-          || entity.visualSignature
-          || ""
+  // Load Products from backend
+  useEffect(() => {
+    const loadProducts = async () => {
+      try {
+        const response = await getProducts(jobId)
+        if (response.products && response.products.length > 0) {
+          const loadedProducts: ProductView[] = response.products.map((p: ProductAnchor) => ({
+            id: p.anchorId,
+            name: p.name,
+            description: p.description,
+            frontView: p.threeViews.front || undefined,
+            sideView: p.threeViews.side || undefined,
+            backView: p.threeViews.back || undefined,
+            confirmed: p.status === "SUCCESS",
+          }))
+          setProducts(loadedProducts)
+        }
+      } catch (error) {
+        console.error("Failed to load products:", error)
+      }
+    }
+    if (jobId) {
+      loadProducts()
+    }
+  }, [jobId])
 
-        // Use anchor's name if available (for renamed characters)
-        const displayName = matchingAnchor?.anchorName
-          || matchingAnchor?.name
-          || entity.displayName
+  // Initialize characters: Priority order:
+  // 1. If characterAnchors exist (from remix), use them directly (they contain the remix-modified data)
+  // 2. Otherwise, fall back to characterLedger (original video analysis data)
+  useEffect(() => {
+    if (characters.length === 0) {
+      let initialChars: CharacterView[] = []
 
-        // Use anchor ID if matched, otherwise use entity ID
-        const id = matchingAnchor?.anchorId || entity.entityId
-
-        return {
-          id,
-          name: displayName,
-          description,
+      // Priority 1: Use characterAnchors if available (remix data with modifications)
+      if (characterAnchors.length > 0) {
+        console.log("📋 Initializing characters from remix anchors:", characterAnchors.length)
+        initialChars = characterAnchors.map((anchor) => ({
+          id: anchor.anchorId,
+          name: anchor.anchorName || anchor.name || "Unknown Character",
+          description: anchor.detailedDescription || "",
           frontView: undefined,
           sideView: undefined,
           backView: undefined,
           confirmed: false,
-        }
-      })
-      onCharactersChange(initialChars)
+        }))
+      }
+      // Priority 2: Fall back to characterLedger if no anchors
+      else if (characterLedger.length > 0) {
+        console.log("📋 Initializing characters from ledger (no anchors):", characterLedger.length)
+        initialChars = characterLedger.map((entity) => ({
+          id: entity.entityId,
+          name: entity.displayName,
+          description: entity.detailedDescription || entity.visualSignature || "",
+          frontView: undefined,
+          sideView: undefined,
+          backView: undefined,
+          confirmed: false,
+        }))
+      }
+
+      if (initialChars.length > 0) {
+        onCharactersChange(initialChars)
+      }
     }
   }, [characterLedger, characterAnchors, characters.length, onCharactersChange])
 
-  // Initialize scenes: Ledger (complete list) + Anchors (overrides)
-  // Merge logic: All environments from ledger are shown, anchors provide style/description updates
+  // Initialize scenes: Priority order:
+  // 1. If environmentAnchors exist (from remix), use them directly (they contain the remix-modified data)
+  // 2. Otherwise, fall back to environmentLedger (original video analysis data)
   useEffect(() => {
-    if (scenes.length === 0 && environmentLedger.length > 0) {
-      const initialScenes: SceneView[] = environmentLedger.map((entity) => {
-        // Check if there's a matching anchor with updated description
-        const matchingAnchor = findMatchingAnchor(entity, environmentAnchors)
+    if (scenes.length === 0) {
+      let initialScenes: SceneView[] = []
 
-        // For environments, anchors may have styleAdaptation or atmosphericConditions
-        // Combine these with the original description if present
-        let description = entity.detailedDescription || entity.visualSignature || ""
-
-        if (matchingAnchor) {
-          // If anchor has a detailed description, use it as the primary description
-          if (matchingAnchor.detailedDescription) {
-            description = matchingAnchor.detailedDescription
+      // Priority 1: Use environmentAnchors if available (remix data with modifications)
+      if (environmentAnchors.length > 0) {
+        console.log("📋 Initializing scenes from remix anchors:", environmentAnchors.length)
+        initialScenes = environmentAnchors.map((anchor) => {
+          // Build description from available fields
+          let description = anchor.detailedDescription || ""
+          if (anchor.styleAdaptation) {
+            description = description ? `${description}\n\nStyle: ${anchor.styleAdaptation}` : `Style: ${anchor.styleAdaptation}`
           }
-          // Append style adaptation if present
-          if (matchingAnchor.styleAdaptation) {
-            description = `${description}\n\nStyle: ${matchingAnchor.styleAdaptation}`
+          if (anchor.atmosphericConditions) {
+            description = description ? `${description}\n\nAtmosphere: ${anchor.atmosphericConditions}` : `Atmosphere: ${anchor.atmosphericConditions}`
           }
-          // Append atmospheric conditions if present
-          if (matchingAnchor.atmosphericConditions) {
-            description = `${description}\n\nAtmosphere: ${matchingAnchor.atmosphericConditions}`
+
+          return {
+            id: anchor.anchorId,
+            name: anchor.anchorName || anchor.name || "Unknown Scene",
+            description: description.trim(),
+            establishingShot: undefined,
+            detailView: undefined,
+            alternateAngle: undefined,
+            confirmed: false,
           }
-        }
-
-        // Use anchor's name if available
-        const displayName = matchingAnchor?.anchorName
-          || matchingAnchor?.name
-          || entity.displayName
-
-        // Use anchor ID if matched, otherwise use entity ID
-        const id = matchingAnchor?.anchorId || entity.entityId
-
-        return {
-          id,
-          name: displayName,
-          description: description.trim(),
+        })
+      }
+      // Priority 2: Fall back to environmentLedger if no anchors
+      else if (environmentLedger.length > 0) {
+        console.log("📋 Initializing scenes from ledger (no anchors):", environmentLedger.length)
+        initialScenes = environmentLedger.map((entity) => ({
+          id: entity.entityId,
+          name: entity.displayName,
+          description: entity.detailedDescription || entity.visualSignature || "",
           establishingShot: undefined,
           detailView: undefined,
           alternateAngle: undefined,
           confirmed: false,
-        }
-      })
-      onScenesChange(initialScenes)
+        }))
+      }
+
+      if (initialScenes.length > 0) {
+        onScenesChange(initialScenes)
+      }
     }
   }, [environmentLedger, environmentAnchors, scenes.length, onScenesChange])
 
@@ -1385,21 +1680,29 @@ export function CharacterSceneViews({
         </CardContent>
       </Card>
 
-      {/* Sound Design Section */}
-      <SoundDesignSection
-        soundDesign={soundDesign}
-        onSoundDesignChange={handleSoundDesignChange}
-        onConfirm={handleSoundDesignConfirm}
-        onCancel={handleSoundDesignCancel}
-      />
+      {/* Sound Design & Visual Style - Side by Side */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
+        {/* Sound Design Section */}
+        <SoundDesignSection
+          soundDesign={soundDesign}
+          onSoundDesignChange={handleSoundDesignChange}
+          onConfirm={handleSoundDesignConfirm}
+          onCancel={handleSoundDesignCancel}
+          isConfirmed={soundDesignConfirmed && !soundDesignEditing}
+          onEdit={handleSoundDesignEdit}
+        />
 
-      {/* Visual Style Section */}
-      <VisualStyleSection
-        visualStyle={visualStyle}
-        onVisualStyleChange={handleVisualStyleChange}
-        onConfirm={handleVisualStyleConfirm}
-        onCancel={handleVisualStyleCancel}
-      />
+        {/* Visual Style Section */}
+        <VisualStyleSection
+          jobId={jobId}
+          visualStyle={visualStyle}
+          onVisualStyleChange={handleVisualStyleChange}
+          onConfirm={handleVisualStyleConfirm}
+          onCancel={handleVisualStyleCancel}
+          isConfirmed={visualStyleConfirmed && !visualStyleEditing}
+          onEdit={handleVisualStyleEdit}
+        />
+      </div>
 
       {/* Characters Section */}
       <div className="space-y-4">
