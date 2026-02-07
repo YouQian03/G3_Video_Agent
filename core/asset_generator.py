@@ -108,7 +108,8 @@ class AssetGenerator:
         detailed_description: str,
         anchor_name: str,
         style_adaptation: str = "",
-        persistent_attributes: List[str] = None
+        persistent_attributes: List[str] = None,
+        visual_style: Dict[str, str] = None
     ) -> str:
         """
         构建角色视图 prompt
@@ -119,6 +120,7 @@ class AssetGenerator:
             anchor_name: 角色名称
             style_adaptation: 风格适配说明
             persistent_attributes: 持久属性列表
+            visual_style: Visual Style 配置 (artStyle, colorPalette, lightingMood, cameraStyle)
         """
         view_instructions = {
             AssetType.CHARACTER_FRONT: "front facing view, looking directly at camera",
@@ -134,22 +136,35 @@ class AssetGenerator:
         if style_adaptation:
             style_str = f"Style: {style_adaptation}. "
 
-        prompt = f"""Cinematic character reference sheet, {view_instructions[view]}.
+        # Build visual style instructions
+        visual_style_str = ""
+        if visual_style:
+            vs_parts = []
+            if visual_style.get("artStyle"):
+                vs_parts.append(f"Art style: {visual_style['artStyle']}")
+            if visual_style.get("colorPalette"):
+                vs_parts.append(f"Color palette: {visual_style['colorPalette']}")
+            if visual_style.get("lightingMood"):
+                vs_parts.append(f"Lighting: {visual_style['lightingMood']}")
+            if vs_parts:
+                visual_style_str = "\n".join(vs_parts) + "\n"
 
-Character: {anchor_name}
+        prompt = f"""Cinematic character reference image, {view_instructions[view]}.
+
+Subject: {anchor_name}
 {detailed_description}
 
 {attributes_str}{style_str}
-
+{visual_style_str}
 Technical requirements:
-- Clean white studio background
-- Professional three-point lighting
-- Same lighting setup across all views
+- Keep all characters, objects, and environment mentioned in the description
+- Maintain the pose, action, and setting described (e.g., sitting in car, standing in room)
+- Professional cinematic lighting
 - High detail, sharp focus
-- Single character only, full body visible
 - No text, no watermarks, no logos
-- Consistent proportions and features
-- 16:9 widescreen composition with character centered
+- Consistent character appearance across all views
+- 16:9 widescreen composition
+- If multiple characters are described, show all of them in the scene
 """
         return prompt.strip()
 
@@ -202,7 +217,8 @@ Technical requirements:
         detailed_description: str,
         anchor_name: str,
         atmospheric_conditions: str = "",
-        style_adaptation: str = ""
+        style_adaptation: str = "",
+        visual_style: Dict[str, str] = None
     ) -> str:
         """
         构建环境三视图 prompt
@@ -213,6 +229,7 @@ Technical requirements:
             anchor_name: 环境名称
             atmospheric_conditions: 大气条件
             style_adaptation: 风格适配说明
+            visual_style: Visual Style 配置 (artStyle, colorPalette, lightingMood, cameraStyle)
         """
         view_instructions = {
             AssetType.ENVIRONMENT_WIDE: {
@@ -250,6 +267,19 @@ Technical requirements:
 
         camera_position = instructions.get('camera_position', '')
 
+        # Build visual style instructions
+        visual_style_str = ""
+        if visual_style:
+            vs_parts = []
+            if visual_style.get("artStyle"):
+                vs_parts.append(f"Art style: {visual_style['artStyle']}")
+            if visual_style.get("colorPalette"):
+                vs_parts.append(f"Color palette: {visual_style['colorPalette']}")
+            if visual_style.get("lightingMood"):
+                vs_parts.append(f"Lighting mood: {visual_style['lightingMood']}")
+            if vs_parts:
+                visual_style_str = "VISUAL STYLE:\n" + "\n".join(vs_parts) + "\n\n"
+
         prompt = f"""Cinematic environment {instructions['shot_type']}, {instructions['lens']} perspective.
 
 Location: {anchor_name}
@@ -261,7 +291,7 @@ SHOT REQUIREMENTS:
 {camera_position}
 
 {atmosphere_str}{style_str}
-
+{visual_style_str}
 Technical requirements:
 - {instructions['lens']} perspective
 - Rich environmental detail
@@ -477,6 +507,7 @@ Technical requirements:
         detailed_description: str,
         style_adaptation: str = "",
         persistent_attributes: List[str] = None,
+        visual_style: Dict[str, str] = None,
         views_to_generate: List[str] = None,
         existing_views: Dict[str, str] = None,
         user_reference_path: str = None,
@@ -491,6 +522,7 @@ Technical requirements:
             detailed_description: 详细描述
             style_adaptation: 风格适配
             persistent_attributes: 持久属性
+            visual_style: Visual Style 配置 (artStyle, colorPalette, lightingMood, cameraStyle)
             views_to_generate: 需要生成的视图列表 ["front", "side", "back"]
             existing_views: 已存在的视图路径 {"front": "/path/to/front.png", ...}
             user_reference_path: 用户上传的参考图路径
@@ -556,7 +588,8 @@ Technical requirements:
                 detailed_description=detailed_description,
                 anchor_name=anchor_name,
                 style_adaptation=style_adaptation,
-                persistent_attributes=persistent_attributes
+                persistent_attributes=persistent_attributes,
+                visual_style=visual_style
             )
 
             # 准备参考图片
@@ -610,6 +643,7 @@ Technical requirements:
         detailed_description: str,
         atmospheric_conditions: str = "",
         style_adaptation: str = "",
+        visual_style: Dict[str, str] = None,
         views_to_generate: List[str] = None,
         existing_views: Dict[str, str] = None,
         user_reference_path: str = None,
@@ -624,6 +658,7 @@ Technical requirements:
             detailed_description: 详细描述
             atmospheric_conditions: 大气条件
             style_adaptation: 风格适配
+            visual_style: Visual Style 配置 (artStyle, colorPalette, lightingMood, cameraStyle)
             views_to_generate: 需要生成的视图列表 ["wide", "detail", "alt"]
             existing_views: 已存在的视图路径
             user_reference_path: 用户上传的参考图路径
@@ -695,7 +730,8 @@ Technical requirements:
                 detailed_description=detailed_description,
                 anchor_name=anchor_name,
                 atmospheric_conditions=atmospheric_conditions,
-                style_adaptation=style_adaptation
+                style_adaptation=style_adaptation,
+                visual_style=visual_style
             )
 
             # 准备参考图片 - use wide shot as reference to maintain location consistency

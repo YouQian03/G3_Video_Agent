@@ -1334,6 +1334,17 @@ def run_entity_generation_background(
         if fresh_entity:
             entity = fresh_entity  # 使用最新数据
 
+        # 读取 Visual Style 配置
+        render_strategy = ir_manager.ir["pillars"]["IV_renderStrategy"]
+        visual_style_config = render_strategy.get("visualStyleConfig", {})
+        visual_style = {
+            "artStyle": visual_style_config.get("artStyle", ""),
+            "colorPalette": visual_style_config.get("colorPalette", ""),
+            "lightingMood": visual_style_config.get("lightingMood", ""),
+            "cameraStyle": visual_style_config.get("cameraStyle", ""),
+        }
+        print(f"   🎨 Visual Style: {visual_style}")
+
         # 获取实体信息
         anchor_name = entity.get("name") or entity.get("anchorName", anchor_id)
         detailed_description = entity.get("detailedDescription", "")
@@ -1357,6 +1368,7 @@ def run_entity_generation_background(
                 anchor_name=anchor_name,
                 detailed_description=detailed_description,
                 style_adaptation=style_adaptation,
+                visual_style=visual_style,
                 views_to_generate=missing_views,
                 existing_views=existing_views,
                 user_reference_path=reference_path
@@ -1380,6 +1392,7 @@ def run_entity_generation_background(
                 detailed_description=detailed_description,
                 atmospheric_conditions=atmospheric_conditions,
                 style_adaptation=style_adaptation,
+                visual_style=visual_style,
                 views_to_generate=missing_views,
                 existing_views=existing_views,
                 user_reference_path=reference_path
