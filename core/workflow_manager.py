@@ -908,6 +908,9 @@ class WorkflowManager:
 
         if node_type == "video_generate":
             for s in target_shots:
+                # 确保 status 字段存在
+                if "status" not in s:
+                    s["status"] = {"stylize": "NOT_STARTED", "video_generate": "NOT_STARTED"}
                 if s["status"].get("stylize") != "SUCCESS":
                     print(f"🔗 [Dependency] 分镜 {s['shot_id']} 缺少定妆图，正在前置生成...")
                     run_stylize(self.job_dir, self.workflow, target_shot=s["shot_id"])

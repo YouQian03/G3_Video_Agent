@@ -1359,3 +1359,32 @@ export async function storyboardChat(
 
   return response.json();
 }
+
+export interface RegenerateFramesResponse {
+  jobId: string;
+  regeneratedShots: RemixStoryboardShot[];
+  count: number;
+}
+
+/**
+ * 重新生成指定分镜的首帧图片
+ */
+export async function regenerateStoryboardFrames(
+  jobId: string,
+  shots: RemixStoryboardShot[]
+): Promise<RegenerateFramesResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/job/${jobId}/storyboard/regenerate-frames`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ shots }),
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: "Frame regeneration failed" }));
+    throw new Error(error.detail || "Frame regeneration failed");
+  }
+
+  return response.json();
+}
