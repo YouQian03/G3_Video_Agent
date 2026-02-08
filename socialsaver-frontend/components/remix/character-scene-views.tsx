@@ -27,7 +27,8 @@ import {
   Music,
   Palette,
   Package,
-  AlertTriangle
+  AlertTriangle,
+  Pencil
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Input } from "@/components/ui/input"
@@ -111,6 +112,17 @@ interface IdentityAnchor {
   atmosphericConditions?: string;
 }
 
+// Storyboard shot info for looking up original frames and scene extraction
+interface StoryboardShotInfo {
+  shotNumber: number
+  shotId?: string
+  firstFrameImage: string
+  // Scene description fields (for fallback scene extraction)
+  contentDescription?: string
+  visualDescription?: string
+  scene?: string  // Direct scene description from concrete shots
+}
+
 interface CharacterSceneViewsProps {
   jobId: string
   // Data from Video Analysis (Character Ledger) - provides complete list
@@ -121,6 +133,8 @@ interface CharacterSceneViewsProps {
   environmentAnchors: IdentityAnchor[]
   characters: CharacterView[]
   scenes: SceneView[]
+  // Storyboard data for looking up original frames
+  storyboard?: StoryboardShotInfo[]
   onCharactersChange: (characters: CharacterView[]) => void
   onScenesChange: (scenes: SceneView[]) => void
   onConfirm: () => void
@@ -165,55 +179,61 @@ function SoundDesignSection({
   // Confirmed read-only view
   if (isConfirmed) {
     return (
-      <Card className="bg-card border-accent">
-        <CardContent className="p-4">
-          <div className="flex items-center justify-between mb-3">
-            <div className="flex items-center gap-2">
-              <Music className="w-5 h-5 text-accent" />
-              <span className="text-base font-semibold text-foreground">Sound Design</span>
-              <CheckCircle className="w-4 h-4 text-accent" />
+      <div className="space-y-4">
+        {/* Title outside card */}
+        <div className="flex items-center justify-between">
+          <h3 className="text-lg font-semibold text-foreground flex items-center gap-2">
+            <Music className="w-5 h-5 text-accent" />
+            Sound Design
+            <CheckCircle className="w-4 h-4 text-accent" />
+          </h3>
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={onEdit}
+            className="h-8 w-8 text-muted-foreground hover:text-accent hover:bg-accent/10"
+          >
+            <Pencil className="w-4 h-4" />
+          </Button>
+        </div>
+        <Card className="bg-card border-accent">
+          <CardContent className="p-4">
+            <div className="grid grid-cols-2 gap-x-6 gap-y-3 mb-3">
+              <div className="space-y-1">
+                <p className="text-sm text-muted-foreground">Voice Style</p>
+                <p className="text-sm text-foreground">{soundDesign.voiceStyle || "-"}</p>
+              </div>
+              <div className="space-y-1">
+                <p className="text-sm text-muted-foreground">Voice Tone</p>
+                <p className="text-sm text-foreground">{soundDesign.voiceTone || "-"}</p>
+              </div>
+              <div className="space-y-1">
+                <p className="text-sm text-muted-foreground">Background Music</p>
+                <p className="text-sm text-foreground">{soundDesign.backgroundMusic || "-"}</p>
+              </div>
+              <div className="space-y-1">
+                <p className="text-sm text-muted-foreground">Sound Effects</p>
+                <p className="text-sm text-foreground">{soundDesign.soundEffects || "-"}</p>
+              </div>
             </div>
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={onEdit}
-              className="h-8 w-8 text-muted-foreground hover:text-accent hover:bg-accent/10"
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>
-            </Button>
-          </div>
-          <div className="grid grid-cols-2 gap-x-6 gap-y-2">
-            <div>
-              <p className="text-xs text-muted-foreground">Voice Style</p>
-              <p className="text-sm text-foreground">{soundDesign.voiceStyle || "-"}</p>
-            </div>
-            <div>
-              <p className="text-xs text-muted-foreground">Voice Tone</p>
-              <p className="text-sm text-foreground">{soundDesign.voiceTone || "-"}</p>
-            </div>
-            <div>
-              <p className="text-xs text-muted-foreground">Background Music</p>
-              <p className="text-sm text-foreground">{soundDesign.backgroundMusic || "-"}</p>
-            </div>
-            <div>
-              <p className="text-xs text-muted-foreground">Sound Effects</p>
-              <p className="text-sm text-foreground">{soundDesign.soundEffects || "-"}</p>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
+            {/* Placeholder to match Visual Style height */}
+            <div className="h-12"></div>
+          </CardContent>
+        </Card>
+      </div>
     )
   }
 
   // Edit mode
   return (
-    <Card className="bg-card border-border">
-      <CardContent className="p-6">
-        <div className="flex items-center gap-2 mb-6">
-          <Music className="w-5 h-5 text-accent" />
-          <span className="text-base font-semibold text-foreground">Sound Design</span>
-          <CheckCircle className="w-5 h-5 text-accent/50" />
-        </div>
+    <div className="space-y-4">
+      {/* Title outside card */}
+      <h3 className="text-lg font-semibold text-foreground flex items-center gap-2">
+        <Music className="w-5 h-5 text-accent" />
+        Sound Design
+      </h3>
+      <Card className="bg-card border-border">
+        <CardContent className="p-6">
 
         <div className="grid grid-cols-2 gap-4 mb-4">
           {/* Voice Style */}
@@ -345,15 +365,17 @@ function SoundDesignSection({
             Cancel
           </Button>
           <Button
+            size="sm"
             onClick={onConfirm}
             className="bg-accent text-accent-foreground hover:bg-accent/90"
           >
-            <Check className="w-4 h-4 mr-2" />
-            Confirm Sound
+            <Check className="w-4 h-4 mr-1" />
+            Confirm
           </Button>
         </div>
       </CardContent>
     </Card>
+    </div>
   )
 }
 
@@ -435,68 +457,74 @@ function VisualStyleSection({
   // Confirmed read-only view
   if (isConfirmed) {
     return (
-      <Card className="bg-card border-accent">
-        <CardContent className="p-4">
-          <div className="flex items-center justify-between mb-3">
-            <div className="flex items-center gap-2">
-              <Palette className="w-5 h-5 text-accent" />
-              <span className="text-base font-semibold text-foreground">Visual Style</span>
-              <CheckCircle className="w-4 h-4 text-accent" />
+      <div className="space-y-4">
+        {/* Title outside card */}
+        <div className="flex items-center justify-between">
+          <h3 className="text-lg font-semibold text-foreground flex items-center gap-2">
+            <Palette className="w-5 h-5 text-accent" />
+            Visual Style
+            <CheckCircle className="w-4 h-4 text-accent" />
+          </h3>
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={onEdit}
+            className="h-8 w-8 text-muted-foreground hover:text-accent hover:bg-accent/10"
+          >
+            <Pencil className="w-4 h-4" />
+          </Button>
+        </div>
+        <Card className="bg-card border-accent">
+          <CardContent className="p-4">
+            <div className="grid grid-cols-2 gap-x-6 gap-y-3 mb-3">
+              <div className="space-y-1">
+                <p className="text-sm text-muted-foreground">Art Style</p>
+                <p className="text-sm text-foreground">{visualStyle.artStyle || "-"}</p>
+              </div>
+              <div className="space-y-1">
+                <p className="text-sm text-muted-foreground">Color Palette</p>
+                <p className="text-sm text-foreground">{visualStyle.colorPalette || "-"}</p>
+              </div>
+              <div className="space-y-1">
+                <p className="text-sm text-muted-foreground">Lighting Mood</p>
+                <p className="text-sm text-foreground">{visualStyle.lightingMood || "-"}</p>
+              </div>
+              <div className="space-y-1">
+                <p className="text-sm text-muted-foreground">Camera Style</p>
+                <p className="text-sm text-foreground">{visualStyle.cameraStyle || "-"}</p>
+              </div>
             </div>
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={onEdit}
-              className="h-8 w-8 text-muted-foreground hover:text-accent hover:bg-accent/10"
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>
-            </Button>
-          </div>
-          <div className="grid grid-cols-2 gap-x-6 gap-y-2 mb-3">
-            <div>
-              <p className="text-xs text-muted-foreground">Art Style</p>
-              <p className="text-sm text-foreground">{visualStyle.artStyle || "-"}</p>
-            </div>
-            <div>
-              <p className="text-xs text-muted-foreground">Color Palette</p>
-              <p className="text-sm text-foreground">{visualStyle.colorPalette || "-"}</p>
-            </div>
-            <div>
-              <p className="text-xs text-muted-foreground">Lighting Mood</p>
-              <p className="text-sm text-foreground">{visualStyle.lightingMood || "-"}</p>
-            </div>
-            <div>
-              <p className="text-xs text-muted-foreground">Camera Style</p>
-              <p className="text-sm text-foreground">{visualStyle.cameraStyle || "-"}</p>
-            </div>
-          </div>
-          {/* Show reference images in read-only */}
-          {visualStyle.referenceImages.length > 0 && (
-            <div className="flex flex-wrap gap-2">
-              {visualStyle.referenceImages.map((url, index) => (
-                <img
-                  key={index}
-                  src={url}
-                  alt={`Reference ${index + 1}`}
-                  className="w-12 h-12 object-cover rounded border border-border"
-                />
-              ))}
-            </div>
-          )}
-        </CardContent>
-      </Card>
+            {/* Show reference images in read-only */}
+            {visualStyle.referenceImages.length > 0 ? (
+              <div className="flex flex-wrap gap-2 h-12">
+                {visualStyle.referenceImages.map((url, index) => (
+                  <img
+                    key={index}
+                    src={url}
+                    alt={`Reference ${index + 1}`}
+                    className="w-12 h-12 object-cover rounded border border-border"
+                  />
+                ))}
+              </div>
+            ) : (
+              <div className="h-12"></div>
+            )}
+          </CardContent>
+        </Card>
+      </div>
     )
   }
 
   // Edit mode
   return (
-    <Card className="bg-card border-border">
-      <CardContent className="p-6">
-        <div className="flex items-center gap-2 mb-6">
-          <Palette className="w-5 h-5 text-accent" />
-          <span className="text-base font-semibold text-foreground">Visual Style</span>
-          <CheckCircle className="w-5 h-5 text-accent/50" />
-        </div>
+    <div className="space-y-4">
+      {/* Title outside card */}
+      <h3 className="text-lg font-semibold text-foreground flex items-center gap-2">
+        <Palette className="w-5 h-5 text-accent" />
+        Visual Style
+      </h3>
+      <Card className="bg-card border-border">
+        <CardContent className="p-6">
 
         <div className="grid grid-cols-2 gap-4 mb-4">
           {/* Art Style */}
@@ -599,25 +627,27 @@ function VisualStyleSection({
             Cancel
           </Button>
           <Button
+            size="sm"
             onClick={handleConfirmClick}
             disabled={isSaving}
             className="bg-accent text-accent-foreground hover:bg-accent/90"
           >
             {isSaving ? (
               <>
-                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                <Loader2 className="w-4 h-4 mr-1 animate-spin" />
                 Saving...
               </>
             ) : (
               <>
-                <Check className="w-4 h-4 mr-2" />
-                Confirm Style
+                <Check className="w-4 h-4 mr-1" />
+                Confirm
               </>
             )}
           </Button>
         </div>
       </CardContent>
     </Card>
+    </div>
   )
 }
 
@@ -739,32 +769,46 @@ function ProductCard({
   return (
     <Card className={cn(
       "bg-card border-border transition-all",
-      product.confirmed && "border-accent/50"
+      product.confirmed && "border-accent"
     )}>
-      <CardHeader className="pb-3">
+      <CardHeader className="pb-2">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Package className="w-5 h-5 text-accent" />
-            <Input
-              value={localName}
-              onChange={(e) => setLocalName(e.target.value)}
-              onBlur={handleNameBlur}
-              placeholder="Product Name"
-              className="bg-transparent border-none p-0 h-auto text-base font-semibold focus-visible:ring-0"
-              disabled={isGenerating}
-            />
-            {product.confirmed && (
-              <CheckCircle className="w-4 h-4 text-accent" />
+            {product.confirmed ? (
+              <span className="text-base font-semibold text-foreground">{localName}</span>
+            ) : (
+              <Input
+                value={localName}
+                onChange={(e) => setLocalName(e.target.value)}
+                onBlur={handleNameBlur}
+                placeholder="Product Name"
+                className="bg-transparent border-none p-0 h-auto text-base font-semibold focus-visible:ring-0"
+                disabled={isGenerating}
+              />
             )}
+            {product.confirmed && <CheckCircle className="w-4 h-4 text-accent" />}
           </div>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={onDelete}
-            className="text-muted-foreground hover:text-red-500"
-          >
-            <X className="w-4 h-4" />
-          </Button>
+          <div className="flex items-center gap-1">
+            {product.confirmed && (
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => onUpdate({ confirmed: false })}
+                className="h-8 w-8 text-muted-foreground hover:text-accent hover:bg-accent/10"
+              >
+                <Pencil className="w-4 h-4" />
+              </Button>
+            )}
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={onDelete}
+              className="h-8 w-8 text-muted-foreground hover:text-red-500"
+            >
+              <X className="w-4 h-4" />
+            </Button>
+          </div>
         </div>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -774,62 +818,63 @@ function ProductCard({
             label="Front"
             imageUrl={product.frontView}
             isLoading={uploadingView === 'front'}
-            disabled={isGenerating}
+            disabled={isGenerating || product.confirmed}
             onUpload={(file) => handleImageUpload('front', file)}
           />
           <ViewUploadSlot
             label="Side"
             imageUrl={product.sideView}
             isLoading={uploadingView === 'side'}
-            disabled={isGenerating}
+            disabled={isGenerating || product.confirmed}
             onUpload={(file) => handleImageUpload('side', file)}
           />
           <ViewUploadSlot
             label="Back"
             imageUrl={product.backView}
             isLoading={uploadingView === 'back'}
-            disabled={isGenerating}
+            disabled={isGenerating || product.confirmed}
             onUpload={(file) => handleImageUpload('back', file)}
           />
         </div>
 
         {/* Description */}
-        <Textarea
-          value={localDescription}
-          onChange={(e) => setLocalDescription(e.target.value)}
-          onBlur={handleDescriptionBlur}
-          placeholder="Product description for AI generation..."
-          className="bg-secondary border-border text-foreground min-h-[80px] text-sm"
-          disabled={isGenerating}
-        />
+        {product.confirmed ? (
+          <div className="text-sm text-muted-foreground">
+            {localDescription || "No description available."}
+          </div>
+        ) : (
+          <Textarea
+            value={localDescription}
+            onChange={(e) => setLocalDescription(e.target.value)}
+            onBlur={handleDescriptionBlur}
+            placeholder="Product description for AI generation..."
+            className="bg-secondary border-border text-foreground min-h-[80px] text-sm"
+            disabled={isGenerating}
+          />
+        )}
 
-        {/* Action Buttons */}
-        <div className="flex justify-end gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => handleAIGenerate(!!allViewsFilled)}
-            disabled={isGenerating || !localDescription.trim()}
-            className="border-accent text-accent hover:bg-accent/10 bg-transparent"
-          >
-            {isGenerating ? (
-              <>
-                <Loader2 className="w-4 h-4 mr-1 animate-spin" />
-                Generating...
-              </>
-            ) : allViewsFilled ? (
-              <>
-                <Sparkles className="w-4 h-4 mr-1" />
-                Regenerate
-              </>
-            ) : (
-              <>
-                <Sparkles className="w-4 h-4 mr-1" />
-                AI Generate
-              </>
-            )}
-          </Button>
-          {allViewsFilled && !product.confirmed && (
+        {/* Action Buttons - only show when not confirmed */}
+        {!product.confirmed && (
+          <div className="flex justify-end gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => handleAIGenerate(!!allViewsFilled)}
+              disabled={isGenerating || !localDescription.trim()}
+              className="border-accent text-accent hover:bg-accent/10 bg-transparent"
+            >
+              {isGenerating ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-1 animate-spin" />
+                  Generating...
+                </>
+              ) : (
+                <>
+                  <Sparkles className="w-4 h-4 mr-1" />
+                  AI Generate
+                </>
+              )}
+            </Button>
             <Button
               size="sm"
               onClick={handleConfirm}
@@ -838,8 +883,8 @@ function ProductCard({
               <Check className="w-4 h-4 mr-1" />
               Confirm
             </Button>
-          )}
-        </div>
+          </div>
+        )}
       </CardContent>
     </Card>
   )
@@ -965,13 +1010,15 @@ function ViewUploadSlot({
   imageUrl,
   isLoading,
   onUpload,
-  disabled
+  disabled,
+  compact
 }: {
   label: string
   imageUrl?: string | null
   isLoading?: boolean
   onUpload: (file: File) => void
   disabled?: boolean
+  compact?: boolean
 }) {
   const inputRef = useRef<HTMLInputElement>(null)
 
@@ -986,20 +1033,22 @@ function ViewUploadSlot({
     if (file) {
       onUpload(file)
     }
-    // Reset input
     if (inputRef.current) {
       inputRef.current.value = ""
     }
   }
 
   return (
-    <div className="flex flex-col items-center gap-2 flex-1">
+    <div className={cn("flex flex-col items-center gap-1", compact ? "flex-1" : "flex-1")}>
       <button
         type="button"
         onClick={handleClick}
         disabled={disabled || isLoading}
         className={cn(
-          "w-full aspect-[3/4] min-w-[100px] max-w-[160px] rounded-lg border-2 border-dashed flex flex-col items-center justify-center gap-2 transition-all",
+          "rounded-lg border-2 border-dashed flex flex-col items-center justify-center transition-all",
+          compact
+            ? "w-full h-24 min-w-[70px]"
+            : "w-full aspect-[3/4] min-w-[100px] max-w-[160px]",
           imageUrl
             ? "border-accent bg-accent/10 p-0"
             : "border-border hover:border-accent hover:bg-secondary/50",
@@ -1007,7 +1056,7 @@ function ViewUploadSlot({
         )}
       >
         {isLoading ? (
-          <Loader2 className="w-8 h-8 text-accent animate-spin" />
+          <Loader2 className={cn("text-accent animate-spin", compact ? "w-5 h-5" : "w-8 h-8")} />
         ) : imageUrl ? (
           <img
             src={imageUrl}
@@ -1015,13 +1064,10 @@ function ViewUploadSlot({
             className="w-full h-full object-cover rounded-lg"
           />
         ) : (
-          <>
-            <ImageIcon className="w-8 h-8 text-muted-foreground" />
-            <Upload className="w-5 h-5 text-muted-foreground" />
-          </>
+          <Upload className={cn("text-muted-foreground", compact ? "w-5 h-5" : "w-8 h-8")} />
         )}
       </button>
-      <span className="text-sm text-muted-foreground font-medium">{label}</span>
+      <span className={cn("text-muted-foreground font-medium", compact ? "text-xs" : "text-sm")}>{label}</span>
       <input
         ref={inputRef}
         type="file"
@@ -1037,11 +1083,13 @@ function CharacterCard({
   jobId,
   anchorId,
   character,
+  originalShotImage,
   onUpdate,
 }: {
   jobId: string
   anchorId: string
   character: CharacterView
+  originalShotImage?: string
   onUpdate: (updates: Partial<CharacterView>) => void
 }) {
   const [isGenerating, setIsGenerating] = useState(false)
@@ -1058,7 +1106,6 @@ function CharacterCard({
     setUploadingView(view)
     try {
       const result = await uploadEntityView(jobId, anchorId, view, file)
-      // Map backend view names to frontend property names
       const viewMap: Record<string, string> = {
         front: 'frontView',
         side: 'sideView',
@@ -1089,11 +1136,9 @@ function CharacterCard({
   const handleAIGenerate = async (forceRegenerate: boolean = false) => {
     setIsGenerating(true)
     try {
-      // Always save description first (ensures latest description is used)
       await updateEntityDescription(jobId, anchorId, localDescription)
       onUpdate({ description: localDescription })
 
-      // Trigger AI generation (with force if regenerating)
       const result = await generateEntityViews(jobId, anchorId, forceRegenerate)
 
       if (result.status === "already_complete" && !forceRegenerate) {
@@ -1102,7 +1147,6 @@ function CharacterCard({
         return
       }
 
-      // Poll for completion
       await pollGenerateViewsStatus(
         jobId,
         anchorId,
@@ -1113,7 +1157,6 @@ function CharacterCard({
         40
       )
 
-      // Fetch updated state (add cache buster to get fresh images)
       const updatedState = await getEntityState(jobId, anchorId)
       const cacheBuster = `?t=${Date.now()}`
       onUpdate({
@@ -1138,83 +1181,123 @@ function CharacterCard({
   return (
     <Card className={cn(
       "bg-card border-border transition-all",
-      character.confirmed && "border-accent/50"
+      character.confirmed && "border-accent"
     )}>
-      <CardHeader className="pb-3">
+      {/* Header: Icon + Name + CheckCircle (if confirmed) + Edit button (if confirmed) */}
+      <CardHeader className="pb-2">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <User className="w-5 h-5 text-accent" />
             <CardTitle className="text-base text-foreground">{character.name}</CardTitle>
+            {character.confirmed && <CheckCircle className="w-4 h-4 text-accent" />}
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-muted-foreground font-mono">{anchorId}</span>
             {character.confirmed && (
-              <CheckCircle className="w-4 h-4 text-accent" />
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => onUpdate({ confirmed: false })}
+                className="h-8 w-8 text-muted-foreground hover:text-accent hover:bg-accent/10"
+              >
+                <Pencil className="w-4 h-4" />
+              </Button>
             )}
           </div>
-          <span className="text-xs text-muted-foreground font-mono">{anchorId}</span>
         </div>
       </CardHeader>
+
       <CardContent className="space-y-4">
-        {/* Three View Slots */}
-        <div className="flex justify-between gap-3 px-2">
-          <ViewUploadSlot
-            label="Front"
-            imageUrl={character.frontView}
-            isLoading={uploadingView === 'front'}
-            disabled={isGenerating}
-            onUpload={(file) => handleImageUpload('front', file)}
-          />
-          <ViewUploadSlot
-            label="Side"
-            imageUrl={character.sideView}
-            isLoading={uploadingView === 'side'}
-            disabled={isGenerating}
-            onUpload={(file) => handleImageUpload('side', file)}
-          />
-          <ViewUploadSlot
-            label="Back"
-            imageUrl={character.backView}
-            isLoading={uploadingView === 'back'}
-            disabled={isGenerating}
-            onUpload={(file) => handleImageUpload('back', file)}
-          />
+        {/* Two-Column Layout: Original Shot + Three Views */}
+        <div className="flex gap-4">
+          {/* Left Column: ORIGINAL SHOT */}
+          <div className="flex-shrink-0">
+            <p className="text-xs text-muted-foreground mb-2 font-medium">ORIGINAL SHOT</p>
+            <div className="relative w-40 h-28 bg-secondary rounded-lg overflow-hidden">
+              {originalShotImage ? (
+                <img
+                  src={originalShotImage}
+                  alt={`Original shot of ${character.name}`}
+                  className="w-full h-full object-cover"
+                />
+              ) : (
+                <div className="w-full h-full flex items-center justify-center text-muted-foreground">
+                  <ImageIcon className="w-8 h-8" />
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Right Column: AI THREE-VIEWS */}
+          <div className="flex-1">
+            <p className="text-xs text-muted-foreground mb-2 font-medium">AI THREE-VIEWS</p>
+            <div className="flex gap-2">
+              <ViewUploadSlot
+                label="Front"
+                imageUrl={character.frontView}
+                isLoading={uploadingView === 'front'}
+                disabled={isGenerating || character.confirmed}
+                onUpload={(file) => handleImageUpload('front', file)}
+                compact
+              />
+              <ViewUploadSlot
+                label="Side"
+                imageUrl={character.sideView}
+                isLoading={uploadingView === 'side'}
+                disabled={isGenerating || character.confirmed}
+                onUpload={(file) => handleImageUpload('side', file)}
+                compact
+              />
+              <ViewUploadSlot
+                label="Back"
+                imageUrl={character.backView}
+                isLoading={uploadingView === 'back'}
+                disabled={isGenerating || character.confirmed}
+                onUpload={(file) => handleImageUpload('back', file)}
+                compact
+              />
+            </div>
+          </div>
         </div>
 
         {/* Description */}
-        <Textarea
-          value={localDescription}
-          onChange={(e) => setLocalDescription(e.target.value)}
-          onBlur={handleDescriptionBlur}
-          placeholder="Character description for AI generation..."
-          className="bg-secondary border-border text-foreground min-h-[80px] text-sm"
-          disabled={isGenerating}
-        />
+        {character.confirmed ? (
+          <div className="text-sm text-muted-foreground">
+            {localDescription || "No description available."}
+          </div>
+        ) : (
+          <Textarea
+            value={localDescription}
+            onChange={(e) => setLocalDescription(e.target.value)}
+            onBlur={handleDescriptionBlur}
+            placeholder="Character description for AI generation..."
+            className="bg-secondary border-border text-foreground min-h-[80px] text-sm"
+            disabled={isGenerating}
+          />
+        )}
 
-        {/* Action Buttons */}
-        <div className="flex justify-end gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => handleAIGenerate(!!allViewsFilled)}
-            disabled={isGenerating || !localDescription.trim()}
-            className="border-accent text-accent hover:bg-accent/10 bg-transparent"
-          >
-            {isGenerating ? (
-              <>
-                <Loader2 className="w-4 h-4 mr-1 animate-spin" />
-                Generating...
-              </>
-            ) : allViewsFilled ? (
-              <>
-                <Sparkles className="w-4 h-4 mr-1" />
-                Regenerate
-              </>
-            ) : (
-              <>
-                <Sparkles className="w-4 h-4 mr-1" />
-                AI Generate
-              </>
-            )}
-          </Button>
-          {allViewsFilled && !character.confirmed && (
+        {/* Action Buttons - only show when not confirmed */}
+        {!character.confirmed && (
+          <div className="flex justify-end gap-2 pt-2 border-t border-border">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => handleAIGenerate(!!allViewsFilled)}
+              disabled={isGenerating || !localDescription.trim()}
+              className="border-accent text-accent hover:bg-accent/10 bg-transparent"
+            >
+              {isGenerating ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-1 animate-spin" />
+                  Generating...
+                </>
+              ) : (
+                <>
+                  <Sparkles className="w-4 h-4 mr-1" />
+                  AI Generate
+                </>
+              )}
+            </Button>
             <Button
               size="sm"
               onClick={handleConfirm}
@@ -1223,8 +1306,8 @@ function CharacterCard({
               <Check className="w-4 h-4 mr-1" />
               Confirm
             </Button>
-          )}
-        </div>
+          </div>
+        )}
       </CardContent>
     </Card>
   )
@@ -1234,11 +1317,13 @@ function SceneCard({
   jobId,
   anchorId,
   scene,
+  originalShotImage,
   onUpdate,
 }: {
   jobId: string
   anchorId: string
   scene: SceneView
+  originalShotImage?: string
   onUpdate: (updates: Partial<SceneView>) => void
 }) {
   const [isGenerating, setIsGenerating] = useState(false)
@@ -1246,7 +1331,6 @@ function SceneCard({
   const [isSavingDescription, setIsSavingDescription] = useState(false)
   const [localDescription, setLocalDescription] = useState(scene.description)
 
-  // Sync local description when scene changes
   useEffect(() => {
     setLocalDescription(scene.description)
   }, [scene.description])
@@ -1255,7 +1339,6 @@ function SceneCard({
     setUploadingView(view)
     try {
       const result = await uploadEntityView(jobId, anchorId, view, file)
-      // Map backend view names to frontend property names
       const viewMap: Record<string, string> = {
         wide: 'establishingShot',
         detail: 'detailView',
@@ -1286,11 +1369,9 @@ function SceneCard({
   const handleAIGenerate = async (forceRegenerate: boolean = false) => {
     setIsGenerating(true)
     try {
-      // Always save description first (ensures latest description is used)
       await updateEntityDescription(jobId, anchorId, localDescription)
       onUpdate({ description: localDescription })
 
-      // Trigger AI generation (with force if regenerating)
       const result = await generateEntityViews(jobId, anchorId, forceRegenerate)
 
       if (result.status === "already_complete" && !forceRegenerate) {
@@ -1299,7 +1380,6 @@ function SceneCard({
         return
       }
 
-      // Poll for completion
       await pollGenerateViewsStatus(
         jobId,
         anchorId,
@@ -1310,7 +1390,6 @@ function SceneCard({
         40
       )
 
-      // Fetch updated state (add cache buster to get fresh images)
       const updatedState = await getEntityState(jobId, anchorId)
       const cacheBuster = `?t=${Date.now()}`
       onUpdate({
@@ -1335,83 +1414,123 @@ function SceneCard({
   return (
     <Card className={cn(
       "bg-card border-border transition-all",
-      scene.confirmed && "border-accent/50"
+      scene.confirmed && "border-accent"
     )}>
-      <CardHeader className="pb-3">
+      {/* Header: Icon + Name + CheckCircle (if confirmed) + Edit button (if confirmed) */}
+      <CardHeader className="pb-2">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <MapPin className="w-5 h-5 text-accent" />
             <CardTitle className="text-base text-foreground">{scene.name}</CardTitle>
+            {scene.confirmed && <CheckCircle className="w-4 h-4 text-accent" />}
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-muted-foreground font-mono">{anchorId}</span>
             {scene.confirmed && (
-              <CheckCircle className="w-4 h-4 text-accent" />
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => onUpdate({ confirmed: false })}
+                className="h-8 w-8 text-muted-foreground hover:text-accent hover:bg-accent/10"
+              >
+                <Pencil className="w-4 h-4" />
+              </Button>
             )}
           </div>
-          <span className="text-xs text-muted-foreground font-mono">{anchorId}</span>
         </div>
       </CardHeader>
+
       <CardContent className="space-y-4">
-        {/* Three View Slots */}
-        <div className="flex justify-between gap-3 px-2">
-          <ViewUploadSlot
-            label="Wide"
-            imageUrl={scene.establishingShot}
-            isLoading={uploadingView === 'wide'}
-            disabled={isGenerating}
-            onUpload={(file) => handleImageUpload('wide', file)}
-          />
-          <ViewUploadSlot
-            label="Detail"
-            imageUrl={scene.detailView}
-            isLoading={uploadingView === 'detail'}
-            disabled={isGenerating}
-            onUpload={(file) => handleImageUpload('detail', file)}
-          />
-          <ViewUploadSlot
-            label="Alt"
-            imageUrl={scene.alternateAngle}
-            isLoading={uploadingView === 'alt'}
-            disabled={isGenerating}
-            onUpload={(file) => handleImageUpload('alt', file)}
-          />
+        {/* Two-Column Layout: Original Shot + Three Views */}
+        <div className="flex gap-4">
+          {/* Left Column: ORIGINAL SHOT */}
+          <div className="flex-shrink-0">
+            <p className="text-xs text-muted-foreground mb-2 font-medium">ORIGINAL SHOT</p>
+            <div className="relative w-40 h-28 bg-secondary rounded-lg overflow-hidden">
+              {originalShotImage ? (
+                <img
+                  src={originalShotImage}
+                  alt={`Original shot of ${scene.name}`}
+                  className="w-full h-full object-cover"
+                />
+              ) : (
+                <div className="w-full h-full flex items-center justify-center text-muted-foreground">
+                  <ImageIcon className="w-8 h-8" />
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Right Column: AI THREE-VIEWS */}
+          <div className="flex-1">
+            <p className="text-xs text-muted-foreground mb-2 font-medium">AI THREE-VIEWS</p>
+            <div className="flex gap-2">
+              <ViewUploadSlot
+                label="Front"
+                imageUrl={scene.establishingShot}
+                isLoading={uploadingView === 'wide'}
+                disabled={isGenerating || scene.confirmed}
+                onUpload={(file) => handleImageUpload('wide', file)}
+                compact
+              />
+              <ViewUploadSlot
+                label="Side"
+                imageUrl={scene.detailView}
+                isLoading={uploadingView === 'detail'}
+                disabled={isGenerating || scene.confirmed}
+                onUpload={(file) => handleImageUpload('detail', file)}
+                compact
+              />
+              <ViewUploadSlot
+                label="Back"
+                imageUrl={scene.alternateAngle}
+                isLoading={uploadingView === 'alt'}
+                disabled={isGenerating || scene.confirmed}
+                onUpload={(file) => handleImageUpload('alt', file)}
+                compact
+              />
+            </div>
+          </div>
         </div>
 
         {/* Description */}
-        <Textarea
-          value={localDescription}
-          onChange={(e) => setLocalDescription(e.target.value)}
-          onBlur={handleDescriptionBlur}
-          placeholder="Scene description for AI generation..."
-          className="bg-secondary border-border text-foreground min-h-[80px] text-sm"
-          disabled={isGenerating}
-        />
+        {scene.confirmed ? (
+          <div className="text-sm text-muted-foreground">
+            {localDescription || "No description available."}
+          </div>
+        ) : (
+          <Textarea
+            value={localDescription}
+            onChange={(e) => setLocalDescription(e.target.value)}
+            onBlur={handleDescriptionBlur}
+            placeholder="Scene description for AI generation..."
+            className="bg-secondary border-border text-foreground min-h-[80px] text-sm"
+            disabled={isGenerating}
+          />
+        )}
 
-        {/* Action Buttons */}
-        <div className="flex justify-end gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => handleAIGenerate(!!allViewsFilled)}
-            disabled={isGenerating || !localDescription.trim()}
-            className="border-accent text-accent hover:bg-accent/10 bg-transparent"
-          >
-            {isGenerating ? (
-              <>
-                <Loader2 className="w-4 h-4 mr-1 animate-spin" />
-                Generating...
-              </>
-            ) : allViewsFilled ? (
-              <>
-                <Sparkles className="w-4 h-4 mr-1" />
-                Regenerate
-              </>
-            ) : (
-              <>
-                <Sparkles className="w-4 h-4 mr-1" />
-                AI Generate
-              </>
-            )}
-          </Button>
-          {allViewsFilled && !scene.confirmed && (
+        {/* Action Buttons - only show when not confirmed */}
+        {!scene.confirmed && (
+          <div className="flex justify-end gap-2 pt-2 border-t border-border">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => handleAIGenerate(!!allViewsFilled)}
+              disabled={isGenerating || !localDescription.trim()}
+              className="border-accent text-accent hover:bg-accent/10 bg-transparent"
+            >
+              {isGenerating ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-1 animate-spin" />
+                  Generating...
+                </>
+              ) : (
+                <>
+                  <Sparkles className="w-4 h-4 mr-1" />
+                  AI Generate
+                </>
+              )}
+            </Button>
             <Button
               size="sm"
               onClick={handleConfirm}
@@ -1420,8 +1539,8 @@ function SceneCard({
               <Check className="w-4 h-4 mr-1" />
               Confirm
             </Button>
-          )}
-        </div>
+          </div>
+        )}
       </CardContent>
     </Card>
   )
@@ -1435,11 +1554,76 @@ export function CharacterSceneViews({
   environmentAnchors,
   characters,
   scenes,
+  storyboard,
   onCharactersChange,
   onScenesChange,
   onConfirm,
   onBack,
 }: CharacterSceneViewsProps) {
+  // Helper function to get original shot image for an entity
+  const getOriginalShotImage = (entityId: string, entityType: 'character' | 'environment'): string | undefined => {
+    // Find entity in ledger to get appearsInShots
+    const ledger = entityType === 'character' ? characterLedger : environmentLedger
+
+    // Try to find entity by exact ID match first
+    let entity = ledger.find(e => e.entityId === entityId)
+
+    // If not found, try to match by converting ID formats:
+    // - "env_01" -> "orig_env_01" (remix anchors -> original ledger)
+    // - "char_01" -> "orig_char_01"
+    if (!entity) {
+      const prefix = entityType === 'character' ? 'char' : 'env'
+      const numMatch = entityId.match(/(\d+)$/)
+      if (numMatch) {
+        const origId = `orig_${prefix}_${numMatch[1].padStart(2, '0')}`
+        entity = ledger.find(e => e.entityId === origId)
+      }
+    }
+
+    // Also try matching by index if entity has format like "env_01" and ledger has "orig_env_01"
+    if (!entity && entityId.match(/^(char|env)_\d+$/)) {
+      const numMatch = entityId.match(/(\d+)$/)
+      if (numMatch) {
+        const num = parseInt(numMatch[1])
+        // Find entity at the same index position (1-indexed)
+        if (num > 0 && num <= ledger.length) {
+          entity = ledger[num - 1]
+        }
+      }
+    }
+
+    if (!entity || !entity.appearsInShots || entity.appearsInShots.length === 0) {
+      return undefined
+    }
+
+    // Get first shot ID where entity appears
+    const firstShotId = entity.appearsInShots[0]
+
+    // Find corresponding frame image from storyboard
+    if (storyboard && storyboard.length > 0) {
+      // Try to match by shotId first
+      const matchByShot = storyboard.find(s =>
+        s.shotId === firstShotId ||
+        `shot_${String(s.shotNumber).padStart(2, '0')}` === firstShotId
+      )
+      if (matchByShot?.firstFrameImage) {
+        return matchByShot.firstFrameImage
+      }
+
+      // Try to extract shot number and match
+      const shotNumMatch = firstShotId.match(/(\d+)/)
+      if (shotNumMatch) {
+        const shotNum = parseInt(shotNumMatch[1])
+        const matchByNum = storyboard.find(s => s.shotNumber === shotNum)
+        if (matchByNum?.firstFrameImage) {
+          return matchByNum.firstFrameImage
+        }
+      }
+    }
+
+    return undefined
+  }
+
   // Sound Design State
   const [soundDesign, setSoundDesign] = useState<SoundDesign>({
     voiceStyle: "Natural",
@@ -1607,30 +1791,110 @@ export function CharacterSceneViews({
     }
   }, [characterLedger, characterAnchors, characters.length, onCharactersChange])
 
-  // Initialize scenes: Priority order:
-  // 1. If environmentAnchors exist (from remix), use them directly (they contain the remix-modified data)
-  // 2. Otherwise, fall back to environmentLedger (original video analysis data)
+  // Initialize scenes using a two-tier approach:
+  // 1. Primary: Use environmentLedger from video analysis (already deduplicated)
+  // 2. Fallback: Extract scenes from storyboard shots and deduplicate by similarity
   useEffect(() => {
     if (scenes.length === 0) {
+      console.log("📋 Initializing scenes...")
+      console.log("   - environmentLedger:", environmentLedger.length, "environments")
+      console.log("   - environmentAnchors:", environmentAnchors.length, "anchors")
+      console.log("   - storyboard:", storyboard?.length || 0, "shots")
+
       let initialScenes: SceneView[] = []
 
-      // Priority 1: Use environmentAnchors if available (remix data with modifications)
-      if (environmentAnchors.length > 0) {
-        console.log("📋 Initializing scenes from remix anchors:", environmentAnchors.length)
-        initialScenes = environmentAnchors.map((anchor) => {
-          // Build description from available fields
-          let description = anchor.detailedDescription || ""
-          if (anchor.styleAdaptation) {
-            description = description ? `${description}\n\nStyle: ${anchor.styleAdaptation}` : `Style: ${anchor.styleAdaptation}`
+      // Create a lookup map for anchors by ID (try multiple ID formats)
+      const anchorMap = new Map<string, IdentityAnchor>()
+      environmentAnchors.forEach(anchor => {
+        anchorMap.set(anchor.anchorId, anchor)
+        // Also map by extracted number: "env_01" -> also accessible via "orig_env_01"
+        const numMatch = anchor.anchorId.match(/(\d+)$/)
+        if (numMatch) {
+          anchorMap.set(`orig_env_${numMatch[1].padStart(2, '0')}`, anchor)
+        }
+      })
+
+      // TIER 1: Use environmentLedger if available
+      if (environmentLedger.length > 0) {
+        console.log("📋 Using environmentLedger as primary source")
+        initialScenes = environmentLedger.map((entity, index) => {
+          // Try to find corresponding anchor
+          const anchor = anchorMap.get(entity.entityId) || anchorMap.get(`env_${String(index + 1).padStart(2, '0')}`)
+
+          if (anchor) {
+            // Use anchor data (remix modified)
+            let description = anchor.detailedDescription || entity.detailedDescription || entity.visualSignature || ""
+            if (anchor.styleAdaptation) {
+              description = description ? `${description}\n\nStyle: ${anchor.styleAdaptation}` : `Style: ${anchor.styleAdaptation}`
+            }
+            if (anchor.atmosphericConditions) {
+              description = description ? `${description}\n\nAtmosphere: ${anchor.atmosphericConditions}` : `Atmosphere: ${anchor.atmosphericConditions}`
+            }
+
+            return {
+              id: entity.entityId,
+              name: anchor.anchorName || anchor.name || entity.displayName,
+              description: description.trim(),
+              establishingShot: undefined,
+              detailView: undefined,
+              alternateAngle: undefined,
+              confirmed: false,
+            }
+          } else {
+            return {
+              id: entity.entityId,
+              name: entity.displayName,
+              description: entity.detailedDescription || entity.visualSignature || "",
+              establishingShot: undefined,
+              detailView: undefined,
+              alternateAngle: undefined,
+              confirmed: false,
+            }
           }
-          if (anchor.atmosphericConditions) {
-            description = description ? `${description}\n\nAtmosphere: ${anchor.atmosphericConditions}` : `Atmosphere: ${anchor.atmosphericConditions}`
+        })
+      }
+      // TIER 2: Fallback - extract from storyboard and deduplicate
+      else if (storyboard && storyboard.length > 0) {
+        console.log("📋 Using storyboard as fallback source")
+
+        // Extract scene info from each shot
+        interface SceneInfo {
+          shotNumber: number
+          description: string
+          image: string
+        }
+
+        const shotScenes: SceneInfo[] = storyboard.map(shot => ({
+          shotNumber: shot.shotNumber,
+          // Priority: scene > contentDescription > visualDescription > fallback
+          description: shot.scene || shot.contentDescription || shot.visualDescription || `Scene from Shot ${shot.shotNumber}`,
+          image: shot.firstFrameImage
+        }))
+
+        // Simple deduplication: group shots with very similar descriptions
+        // For now, each shot is its own scene (user can merge later if needed)
+        // A smarter approach would use AI to compare scene similarity
+        const uniqueScenes = new Map<string, SceneInfo>()
+
+        shotScenes.forEach((scene, index) => {
+          // Simple heuristic: first 50 chars of description as key
+          // This will group very similar scenes together
+          const key = scene.description.slice(0, 50).toLowerCase().trim()
+
+          // Keep the first occurrence of each unique scene
+          if (!uniqueScenes.has(key)) {
+            uniqueScenes.set(key, scene)
           }
+        })
+
+        initialScenes = Array.from(uniqueScenes.values()).map((scene, index) => {
+          const sceneId = `scene_${String(index + 1).padStart(2, '0')}`
+          const anchor = anchorMap.get(sceneId)
 
           return {
-            id: anchor.anchorId,
-            name: anchor.anchorName || anchor.name || "Unknown Scene",
-            description: description.trim(),
+            id: sceneId,
+            name: anchor?.anchorName || anchor?.name || `Scene ${index + 1}`,
+            description: anchor?.detailedDescription || scene.description,
             establishingShot: undefined,
             detailView: undefined,
             alternateAngle: undefined,
@@ -1638,25 +1902,15 @@ export function CharacterSceneViews({
           }
         })
       }
-      // Priority 2: Fall back to environmentLedger if no anchors
-      else if (environmentLedger.length > 0) {
-        console.log("📋 Initializing scenes from ledger (no anchors):", environmentLedger.length)
-        initialScenes = environmentLedger.map((entity) => ({
-          id: entity.entityId,
-          name: entity.displayName,
-          description: entity.detailedDescription || entity.visualSignature || "",
-          establishingShot: undefined,
-          detailView: undefined,
-          alternateAngle: undefined,
-          confirmed: false,
-        }))
-      }
 
       if (initialScenes.length > 0) {
+        console.log("📋 Initialized", initialScenes.length, "scenes")
         onScenesChange(initialScenes)
+      } else {
+        console.log("📋 No scenes to initialize (no data available)")
       }
     }
-  }, [environmentLedger, environmentAnchors, scenes.length, onScenesChange])
+  }, [environmentLedger, environmentAnchors, storyboard, scenes.length, onScenesChange])
 
   const updateCharacter = (id: string, updates: Partial<CharacterView>) => {
     onCharactersChange(
@@ -1732,7 +1986,7 @@ export function CharacterSceneViews({
       </Card>
 
       {/* Sound Design & Visual Style - Side by Side */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
         {/* Sound Design Section */}
         <SoundDesignSection
           soundDesign={soundDesign}
@@ -1785,6 +2039,7 @@ export function CharacterSceneViews({
                 jobId={jobId}
                 anchorId={character.id}
                 character={character}
+                originalShotImage={getOriginalShotImage(character.id, 'character')}
                 onUpdate={(updates) => updateCharacter(character.id, updates)}
               />
             ))}
@@ -1822,6 +2077,7 @@ export function CharacterSceneViews({
                 jobId={jobId}
                 anchorId={scene.id}
                 scene={scene}
+                originalShotImage={getOriginalShotImage(scene.id, 'environment')}
                 onUpdate={(updates) => updateScene(scene.id, updates)}
               />
             ))}

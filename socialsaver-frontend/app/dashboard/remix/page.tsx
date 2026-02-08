@@ -1382,6 +1382,7 @@ export default function RemixPage() {
                 environmentAnchors={environmentAnchors}
                 characters={characters}
                 scenes={scenes}
+                storyboard={realStoryboard?.storyboard || analysisResult?.storyboard}
                 onCharactersChange={setCharacters}
                 onScenesChange={setScenes}
                 onConfirm={handleViewsConfirm}

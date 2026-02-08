@@ -149,7 +149,7 @@ export function StoryboardTable({ data, title = "Storyboard Breakdown", showSave
                     </td>
                     {/* shot_type */}
                     <td className="text-foreground p-3 align-top" style={{minWidth: "100px"}}>
-                      <div className="break-words whitespace-normal text-xs">{safeStr(shot.shotType) || safeStr(shot.shotSize)}</div>
+                      <div className="break-words whitespace-normal text-xs">{safeStr(shot.shotType || shot.shotSize)}</div>
                     </td>
                     {/* camera_angle */}
                     <td className="text-foreground p-3 align-top" style={{minWidth: "100px"}}>
@@ -161,7 +161,7 @@ export function StoryboardTable({ data, title = "Storyboard Breakdown", showSave
                     </td>
                     {/* focus_and_depth */}
                     <td className="text-foreground p-3 align-top" style={{minWidth: "140px"}}>
-                      <div className="break-words whitespace-normal text-xs">{safeStr(shot.focusAndDepth) || safeStr(shot.focalLengthDepth)}</div>
+                      <div className="break-words whitespace-normal text-xs">{safeStr(shot.focusAndDepth || shot.focalLengthDepth)}</div>
                     </td>
                     {/* lighting */}
                     <td className="text-foreground p-3 align-top" style={{minWidth: "180px"}}>

@@ -96,6 +96,7 @@ def convert_shot_to_socialsaver(shot: Dict[str, Any], job_id: str, base_url: str
 
     return {
         "shotNumber": shot_number,
+        "shotId": shot_id,  # 添加 shotId 用于角色/场景匹配
         "firstFrameImage": first_frame,
         # 🎬 frame_description -> visualDescription (首帧描述)
         "visualDescription": shot.get("frame_description", "") or visual_description,
@@ -1015,27 +1016,93 @@ def generate_storyboard_frame(
     # 构建修改指令（而不是完整描述）
     modification_parts = []
 
-    # 1. 收集角色修改描述
+    # 1. 收集角色修改描述 + 三视图参考图片
     char_ids = applied_anchors.get("characters", [])
     char_descs = []
+    char_reference_images = []  # 存储角色参考图片的字节数据
     if char_ids and identity_anchors.get("characters"):
         for char in identity_anchors["characters"]:
             if char.get("anchorId") in char_ids:
+                anchor_id = char.get("anchorId", "unknown")
                 desc = char.get("detailedDescription", "")
                 if desc:
-                    char_descs.append(desc[:300])
-                    print(f"   🔗 [Anchor] Applied character: {char.get('anchorId')} -> {desc[:50]}...")
+                    char_descs.append(f"[{anchor_id}]: {desc[:300]}")
+                    print(f"   🔗 [Anchor] Applied character: {anchor_id} -> {desc[:50]}...")
 
-    # 2. 收集环境修改描述
+                # 读取三视图参考图片
+                three_views = char.get("threeViews", {})
+                for view_type in ["front", "side", "back"]:
+                    view_path = three_views.get(view_type)
+                    if view_path:
+                        # 路径可能是:
+                        # 1. 绝对路径: /Users/.../jobs/job_xxx/assets/...
+                        # 2. 相对路径: jobs/job_xxx/assets/... (相对于工作目录)
+                        # 3. 仅文件名: anchor_front.png (相对于 job_dir/assets)
+                        if not os.path.isabs(view_path):
+                            if view_path.startswith("jobs/"):
+                                # 已经是从工作目录开始的路径
+                                pass
+                            elif "/" not in view_path:
+                                # 仅文件名，需要补全路径
+                                view_path = str(job_dir / "assets" / view_path)
+                            # 否则保持原样
+                        if os.path.exists(view_path):
+                            try:
+                                with open(view_path, "rb") as f:
+                                    img_bytes = f.read()
+                                    char_reference_images.append({
+                                        "anchor_id": anchor_id,
+                                        "view": view_type,
+                                        "bytes": img_bytes
+                                    })
+                                    print(f"   🖼️ [Reference] Loaded character {anchor_id} {view_type} view from {view_path}")
+                            except Exception as e:
+                                print(f"   ⚠️ Failed to load {view_path}: {e}")
+                        else:
+                            print(f"   ⚠️ Reference image not found: {view_path}")
+
+    # 2. 收集环境修改描述 + 三视图参考图片
     env_ids = applied_anchors.get("environments", [])
     env_descs = []
+    env_reference_images = []  # 存储环境参考图片的字节数据
     if env_ids and identity_anchors.get("environments"):
         for env in identity_anchors["environments"]:
             if env.get("anchorId") in env_ids:
+                anchor_id = env.get("anchorId", "unknown")
                 desc = env.get("detailedDescription", "")
                 if desc:
-                    env_descs.append(desc[:300])
-                    print(f"   🔗 [Anchor] Applied environment: {env.get('anchorId')} -> {desc[:50]}...")
+                    env_descs.append(f"[{anchor_id}]: {desc[:300]}")
+                    print(f"   🔗 [Anchor] Applied environment: {anchor_id} -> {desc[:50]}...")
+
+                # 读取三视图参考图片
+                three_views = env.get("threeViews", {})
+                for view_type in ["wide", "detail", "alt"]:
+                    view_path = three_views.get(view_type)
+                    if view_path:
+                        # 路径处理逻辑同上
+                        if not os.path.isabs(view_path):
+                            if view_path.startswith("jobs/"):
+                                pass
+                            elif "/" not in view_path:
+                                view_path = str(job_dir / "assets" / view_path)
+                        if os.path.exists(view_path):
+                            try:
+                                with open(view_path, "rb") as f:
+                                    img_bytes = f.read()
+                                    env_reference_images.append({
+                                        "anchor_id": anchor_id,
+                                        "view": view_type,
+                                        "bytes": img_bytes
+                                    })
+                                    print(f"   🖼️ [Reference] Loaded environment {anchor_id} {view_type} view from {view_path}")
+                            except Exception as e:
+                                print(f"   ⚠️ Failed to load {view_path}: {e}")
+                        else:
+                            print(f"   ⚠️ Reference image not found: {view_path}")
+
+    # 合并所有参考图片
+    all_reference_images = char_reference_images + env_reference_images
+    print(f"   📸 Total reference images loaded: {len(all_reference_images)}")
 
     # 3. 收集视觉风格
     style_parts = []
@@ -1058,42 +1125,82 @@ def generate_storyboard_frame(
 
         if has_reference:
             # ✅ 有参考图：使用图片编辑模式，保持构图一致性
-            print(f"🎨 [Storyboard] Editing {shot_id} with reference image (preserving composition)...")
+            print(f"🎨 [Storyboard] Editing {shot_id} with reference image + {len(all_reference_images)} character refs...")
 
             # 读取原始帧
             with open(original_frame_path, "rb") as f:
                 original_image_bytes = f.read()
 
-            # 构建编辑指令（强调保持构图）
-            edit_instructions = []
-            edit_instructions.append("CRITICAL: Maintain EXACT composition, camera angle, framing, and layout from the reference image.")
-            edit_instructions.append("Only modify the specified elements while preserving everything else.")
+            # 构建叙述性 prompt（按照 Gemini 文档建议，使用描述性段落而非指令列表）
+            prompt_parts = []
 
+            # 描述场景和目标
+            prompt_parts.append(f"Generate a cinematic frame based on the provided reference images.")
+
+            # 参考图说明（告诉 Gemini 每张图的用途）
+            if all_reference_images:
+                char_refs = [r for r in all_reference_images if 'char' in r['anchor_id'].lower()]
+                env_refs = [r for r in all_reference_images if 'env' in r['anchor_id'].lower()]
+
+                if char_refs:
+                    prompt_parts.append(f"I have provided {len(char_refs)} character reference images showing the exact appearance of the characters:")
+                    for ref in char_refs:
+                        prompt_parts.append(f"  - {ref['anchor_id']} ({ref['view']} view)")
+                    prompt_parts.append("The characters in the output should look exactly like these reference images, maintaining their facial features, clothing, and overall appearance.")
+
+                if env_refs:
+                    prompt_parts.append(f"I have provided {len(env_refs)} environment reference images:")
+                    for ref in env_refs:
+                        prompt_parts.append(f"  - {ref['anchor_id']} ({ref['view']} view)")
+
+            # 角色详细描述
             if char_descs:
-                edit_instructions.append(f"UPDATE CHARACTERS: {'; '.join(char_descs)}")
+                for desc in char_descs:
+                    prompt_parts.append(f"Character details: {desc}")
+
+            # 环境详细描述
             if env_descs:
-                edit_instructions.append(f"UPDATE ENVIRONMENT: {'; '.join(env_descs)}")
-            if style_parts:
-                edit_instructions.append(f"APPLY STYLE: {', '.join(style_parts)}")
+                for desc in env_descs:
+                    prompt_parts.append(f"Environment details: {desc}")
+
+            # 场景上下文
             if t2i_prompt:
-                edit_instructions.append(f"SCENE CONTEXT: {t2i_prompt}")
+                prompt_parts.append(f"Scene description: {t2i_prompt}")
 
-            edit_instructions.append("PRESERVE: Original composition, camera angle, subject positions, lighting direction, color palette consistency.")
-            edit_instructions.append("OUTPUT: High quality, cinematic, 16:9 aspect ratio, single image.")
+            # 视觉风格
+            if style_parts:
+                prompt_parts.append(f"Visual style: {', '.join(style_parts)}")
 
-            final_prompt = "\n".join(edit_instructions)
-            print(f"   📝 Edit prompt: {final_prompt[:150]}...")
+            # 构图参考（原始帧）
+            prompt_parts.append("The last image provided is the composition reference. Maintain the exact same camera angle, framing, and layout, but replace the characters with the ones shown in the character reference images.")
+
+            final_prompt = " ".join(prompt_parts)
+            print(f"   📝 Edit prompt: {final_prompt[:300]}...")
 
             def call_gemini_edit():
+                # 按照 Gemini 文档：prompt 在前，图片在后
+                # 角色参考图放在最前面（用于角色一致性），原始帧放在最后（用于构图参考）
+                contents = [final_prompt]
+
+                # 1. 先添加角色/环境参考图（最多5张人物 + 6张物体）
+                for ref in all_reference_images[:6]:
+                    contents.append(types.Part.from_bytes(data=ref["bytes"], mime_type="image/png"))
+
+                # 2. 最后添加原始帧作为构图参考
+                contents.append(types.Part.from_bytes(data=original_image_bytes, mime_type="image/png"))
+
                 return client.models.generate_content(
-                    model="gemini-2.5-flash-image",
-                    contents=[
-                        types.Part.from_bytes(data=original_image_bytes, mime_type="image/png"),
-                        final_prompt
-                    ],
+                    model="gemini-3-pro-image-preview",
+                    contents=contents,
+                    config=types.GenerateContentConfig(
+                        response_modalities=['TEXT', 'IMAGE'],
+                        image_config=types.ImageConfig(
+                            aspect_ratio="16:9",
+                        ),
+                    ),
                 )
 
-            TIMEOUT_SECONDS = 120
+            TIMEOUT_SECONDS = 180  # 增加超时时间，因为 Pro 模型可能需要更长时间
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
                 future = executor.submit(call_gemini_edit)
                 try:
@@ -1103,27 +1210,68 @@ def generate_storyboard_frame(
                     return ""
 
         else:
-            # ⚠️ 无参考图：纯文本生成（fallback）
-            print(f"🎨 [Storyboard] Generating {shot_id} from text (no reference image)...")
+            # ⚠️ 无原始帧参考：使用三视图参考图 + 文本生成
+            print(f"🎨 [Storyboard] Generating {shot_id} {'with ' + str(len(all_reference_images)) + ' reference images' if all_reference_images else 'from text only'}...")
 
+            # 构建叙述性 prompt
             prompt_parts = []
+
+            prompt_parts.append("Generate a cinematic scene based on the provided reference images and description.")
+
+            # 参考图说明
+            if all_reference_images:
+                char_refs = [r for r in all_reference_images if 'char' in r['anchor_id'].lower()]
+                env_refs = [r for r in all_reference_images if 'env' in r['anchor_id'].lower()]
+
+                if char_refs:
+                    prompt_parts.append(f"I have provided {len(char_refs)} character reference images:")
+                    for ref in char_refs:
+                        prompt_parts.append(f"  - {ref['anchor_id']} ({ref['view']} view)")
+                    prompt_parts.append("The characters should look exactly like those in the reference images.")
+
+                if env_refs:
+                    prompt_parts.append(f"I have provided {len(env_refs)} environment reference images:")
+                    for ref in env_refs:
+                        prompt_parts.append(f"  - {ref['anchor_id']} ({ref['view']} view)")
+
+            # 场景描述
             if t2i_prompt:
-                prompt_parts.append(t2i_prompt)
+                prompt_parts.append(f"Scene description: {t2i_prompt}")
+
+            # 角色详细描述
             if char_descs:
-                prompt_parts.append(f"Characters: {'; '.join(char_descs)}")
+                for desc in char_descs:
+                    prompt_parts.append(f"Character details: {desc}")
+
+            # 环境详细描述
             if env_descs:
-                prompt_parts.append(f"Environment: {'; '.join(env_descs)}")
+                for desc in env_descs:
+                    prompt_parts.append(f"Environment details: {desc}")
+
+            # 视觉风格
             if style_parts:
                 prompt_parts.append(f"Visual style: {', '.join(style_parts)}")
-            prompt_parts.append("High quality, cinematic composition, detailed, 16:9 aspect ratio, single image")
 
-            final_prompt = ". ".join(prompt_parts)
-            print(f"   📝 Text prompt: {final_prompt[:150]}...")
+            prompt_parts.append("Create a high-quality, cinematic composition with detailed rendering.")
+
+            final_prompt = " ".join(prompt_parts)
+            print(f"   📝 Text prompt: {final_prompt[:300]}...")
 
             def call_gemini_text():
+                # prompt 在前，参考图在后
+                contents = [final_prompt]
+                for ref in all_reference_images[:6]:
+                    contents.append(types.Part.from_bytes(data=ref["bytes"], mime_type="image/png"))
+
                 return client.models.generate_content(
-                    model="gemini-2.5-flash-image",
-                    contents=[final_prompt],
+                    model="gemini-3-pro-image-preview",
+                    contents=contents,
+                    config=types.GenerateContentConfig(
+                        response_modalities=['TEXT', 'IMAGE'],
+                        image_config=types.ImageConfig(
+                            aspect_ratio="16:9",
+                        ),
+                    ),
                 )
 
             TIMEOUT_SECONDS = 120
@@ -1182,6 +1330,13 @@ async def generate_remix_storyboard(job_id: str, background_tasks: BackgroundTas
     identity_anchors = {}
     is_using_original = False
 
+    # 创建 concrete shots 查找字典（用于 fallback）
+    concrete_shots_lookup = {}
+    for shot in concrete_shots:
+        shot_id = shot.get("shotId", "")
+        if shot_id:
+            concrete_shots_lookup[shot_id] = shot
+
     if remixed_layer and remixed_layer.get("shots"):
         # ===== 使用 remixedLayer 数据并生成新的分镜图 =====
         print(f"🎬 [Storyboard] Generating storyboard frames using remixed data...")
@@ -1227,6 +1382,11 @@ async def generate_remix_storyboard(job_id: str, background_tasks: BackgroundTas
             # 获取摄影参数
             camera = shot.get("cameraPreserved", {})
 
+            # 获取对应的原始 concrete shot（用于 fallback）
+            original_shot = concrete_shots_lookup.get(shot_id, {})
+            original_camera = original_shot.get("camera", {})  # 注意：concrete shot 用 "camera" 而不是 "cinematography"
+            original_audio = original_shot.get("audio", {})
+
             # 构建视觉描述
             visual_desc = shot.get("I2V_VideoGen", "") or t2i_prompt
 
@@ -1239,30 +1399,46 @@ async def generate_remix_storyboard(job_id: str, background_tasks: BackgroundTas
             if style_notes:
                 visual_desc += f" [{', '.join(style_notes)}]"
 
-            # 计算时长
-            duration = shot.get("durationSeconds", 3.0)
+            # 计算时长（优先 remix，fallback 到 original）
+            duration = shot.get("durationSeconds") or original_shot.get("durationSeconds", 3.0)
 
             # 添加时间戳防止浏览器缓存
             import time
             cache_buster = int(time.time() * 1000)
             first_frame_with_cache = f"{first_frame_image}?t={cache_buster}" if first_frame_image else ""
 
+            # 合并摄影参数：remix 优先，original 作为 fallback
+            shot_size = camera.get("shotSize") or original_camera.get("shotSize", "MEDIUM")
+            camera_angle = camera.get("cameraAngle") or original_camera.get("cameraAngle", "eye-level")
+            camera_movement = camera.get("cameraMovement") or original_camera.get("cameraMovement", "static")
+            focal_length_depth = camera.get("focalLengthDepth") or original_camera.get("focalLengthDepth", "")
+
+            # 光影：remix 优先，original 作为 fallback
+            lighting = camera.get("lighting") or original_shot.get("lighting", "")
+
+            # 音频：remix 优先，original 作为 fallback
+            music = original_audio.get("music", "") or original_audio.get("soundDesign", "")
+            dialogue_voiceover = original_audio.get("dialogue", "") or original_audio.get("dialogueText", "")
+
             storyboard_shot = {
                 "shotNumber": idx + 1,
                 "shotId": shot_id,
                 "firstFrameImage": first_frame_with_cache,
                 "visualDescription": visual_desc,
-                "contentDescription": shot.get("remixNotes", "") or shot.get("beatTag", ""),
+                "contentDescription": shot.get("remixNotes", "") or shot.get("beatTag", "") or original_shot.get("beatTag", ""),
                 "startSeconds": 0,
                 "endSeconds": 0,
                 "durationSeconds": duration,
-                "shotSize": camera.get("shotSize", "MEDIUM"),
-                "cameraAngle": camera.get("cameraAngle", "eye-level"),
-                "cameraMovement": camera.get("cameraMovement", "static"),
-                "focalLengthDepth": camera.get("focalLengthDepth", ""),
-                "lighting": camera.get("lighting", ""),
-                "music": "",
-                "dialogueVoiceover": "",
+                # 同时提供两种字段名，确保前端兼容
+                "shotType": shot_size,
+                "shotSize": shot_size,
+                "cameraAngle": camera_angle,
+                "cameraMovement": camera_movement,
+                "focusAndDepth": focal_length_depth,
+                "focalLengthDepth": focal_length_depth,
+                "lighting": lighting,
+                "music": music,
+                "dialogueVoiceover": dialogue_voiceover,
                 "i2vPrompt": shot.get("I2V_VideoGen", ""),
                 "appliedAnchors": applied_anchors,
             }
@@ -1327,22 +1503,37 @@ async def generate_remix_storyboard(job_id: str, background_tasks: BackgroundTas
             cache_buster = int(time.time() * 1000)
             first_frame_with_cache = f"{first_frame_image}?t={cache_buster}" if first_frame_image else ""
 
+            # 从 concrete shot 的 camera 对象中获取摄影参数
+            camera = shot.get("camera", {})
+            audio = shot.get("audio", {})
+
+            shot_size = camera.get("shotSize", "") or shot.get("shotSize", "MEDIUM")
+            camera_angle = camera.get("cameraAngle", "") or shot.get("cameraAngle", "eye-level")
+            camera_movement = camera.get("cameraMovement", "") or shot.get("cameraMovement", "static")
+            focal_length_depth = camera.get("focalLengthDepth", "") or shot.get("focalLengthDepth", "")
+            lighting = shot.get("lighting", "")
+            music = audio.get("music", "") or audio.get("soundDesign", "") or shot.get("music", "")
+            dialogue = audio.get("dialogue", "") or audio.get("dialogueText", "") or shot.get("dialogueVoiceover", "")
+
             storyboard_shot = {
                 "shotNumber": idx + 1,
                 "shotId": shot_id,
                 "firstFrameImage": first_frame_with_cache,
                 "visualDescription": visual_desc,
-                "contentDescription": shot.get("contentDescription", "") or shot.get("action", ""),
+                "contentDescription": shot.get("subject", "") or shot.get("contentDescription", "") or shot.get("action", ""),
                 "startSeconds": float(start_time),
                 "endSeconds": float(end_time),
                 "durationSeconds": float(duration),
-                "shotSize": shot.get("shotSize", "MEDIUM"),
-                "cameraAngle": shot.get("cameraAngle", "eye-level"),
-                "cameraMovement": shot.get("cameraMovement", "static"),
-                "focalLengthDepth": shot.get("focalLengthDepth", ""),
-                "lighting": shot.get("lighting", ""),
-                "music": shot.get("music", ""),
-                "dialogueVoiceover": shot.get("dialogueVoiceover", "") or shot.get("dialogue", ""),
+                # 同时提供两种字段名，确保前端兼容
+                "shotType": shot_size,
+                "shotSize": shot_size,
+                "cameraAngle": camera_angle,
+                "cameraMovement": camera_movement,
+                "focusAndDepth": focal_length_depth,
+                "focalLengthDepth": focal_length_depth,
+                "lighting": lighting,
+                "music": music,
+                "dialogueVoiceover": dialogue,
                 "i2vPrompt": visual_desc,
                 "appliedAnchors": {"characters": [], "environments": []},
             }
