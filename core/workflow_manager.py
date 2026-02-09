@@ -153,6 +153,104 @@ class WorkflowManager:
         print(f"✅ [Done] 视频拆解与切片完成，Job ID: {new_id}")
         return new_id
 
+    def _complete_initialization(self, video_path: Path) -> None:
+        """
+        完成初始化的后半部分（用于异步模式）
+        假设 job_id 和 job_dir 已经设置好，视频已经在 job_dir/input.mp4
+        """
+        print(f"🚀 [Phase 1] 正在通过 Gemini 拆解视频: {self.job_id}...")
+        storyboard = self._run_gemini_analysis(video_path)
+
+        print(f"🚀 [Phase 2] 正在提取关键帧与原始分镜短片...")
+        self._run_ffmpeg_extraction(video_path, storyboard)
+
+        shots = []
+        for s in storyboard:
+            shot_num = int(s.get("shot_number", 1))
+            sid = f"shot_{shot_num:02d}"
+
+            narrative_desc = s.get("frame_description") or s.get("content_analysis") or ""
+
+            shot_scale = s.get("shot_scale", "")
+            subject_frame_position = s.get("subject_frame_position", "")
+            subject_orientation = s.get("subject_orientation", "")
+            gaze_direction = s.get("gaze_direction", "")
+            motion_vector = s.get("motion_vector", "")
+            camera_type = s.get("camera_type") or s.get("camera_movement", "")
+
+            desc_lines = [narrative_desc]
+            if shot_scale:
+                desc_lines.append(f"[SCALE: {shot_scale}]")
+            if subject_frame_position:
+                desc_lines.append(f"[POSITION: {subject_frame_position}]")
+            if subject_orientation:
+                desc_lines.append(f"[ORIENTATION: {subject_orientation}]")
+            if gaze_direction:
+                desc_lines.append(f"[GAZE: {gaze_direction}]")
+            if motion_vector:
+                desc_lines.append(f"[MOTION: {motion_vector}]")
+            if camera_type:
+                desc_lines.append(f"[CAMERA: {camera_type}]")
+
+            full_description = "\n".join(desc_lines)
+
+            cinematography_data = {
+                "shot_scale": shot_scale,
+                "subject_frame_position": subject_frame_position,
+                "subject_orientation": subject_orientation,
+                "gaze_direction": gaze_direction,
+                "motion_vector": motion_vector,
+                "camera_type": camera_type
+            }
+
+            lighting = s.get("lighting", "")
+            music_mood = s.get("music_mood", "")
+            dialogue_voiceover = s.get("dialogue_voiceover", "")
+            content_analysis = s.get("content_analysis", narrative_desc)
+
+            shots.append({
+                "shot_id": sid,
+                "start_time": s.get("start_time"),
+                "end_time": s.get("end_time"),
+                "description": full_description,
+                "content_analysis": content_analysis,
+                "lighting": lighting,
+                "music_mood": music_mood,
+                "dialogue_voiceover": dialogue_voiceover,
+                "cinematography": cinematography_data,
+                "entities": [],
+                "assets": {
+                    "first_frame": f"frames/{sid}.png",
+                    "source_video_segment": f"source_segments/{sid}.mp4",
+                    "stylized_frame": None,
+                    "video": None
+                },
+                "status": {
+                    "stylize": "NOT_STARTED",
+                    "video_generate": "NOT_STARTED"
+                }
+            })
+
+        self.workflow = {
+            "job_id": self.job_id,
+            "source_video": "input.mp4",
+            "film_ir_path": "film_ir.json",
+            "global": {"style_prompt": "Cinematic Realistic", "video_model": "seedance"},
+            "global_stages": {
+                "analyze": "SUCCESS", "extract": "SUCCESS",
+                "stylize": "NOT_STARTED", "video_gen": "NOT_STARTED", "merge": "NOT_STARTED"
+            },
+            "shots": shots,
+            "meta": {"attempts": 0, "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
+        }
+
+        self.save()
+
+        # 初始化 Film IR
+        self._initialize_film_ir(self.job_id, storyboard)
+
+        print(f"✅ [Done] 视频拆解与切片完成，Job ID: {self.job_id}")
+
     def _initialize_film_ir(self, job_id: str, storyboard: List[Dict]) -> None:
         """
         初始化 Film IR 结构

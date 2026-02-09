@@ -67,7 +67,16 @@ export interface AgentChatResponse {
 // ============================================================
 
 /**
- * Upload video and trigger AI analysis
+ * Upload status response
+ */
+interface UploadStatus {
+  status: "queued" | "analyzing" | "completed" | "failed" | "unknown";
+  stage: string;
+  message: string;
+}
+
+/**
+ * Upload video (async mode - returns immediately)
  */
 export async function uploadVideo(file: File): Promise<UploadResponse> {
   const formData = new FormData();
@@ -84,6 +93,69 @@ export async function uploadVideo(file: File): Promise<UploadResponse> {
   }
 
   return response.json();
+}
+
+/**
+ * Poll upload analysis status
+ */
+export async function getUploadStatus(jobId: string): Promise<UploadStatus> {
+  const response = await fetch(`${API_BASE_URL}/api/job/${jobId}/upload-status`);
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: "Failed to fetch upload status" }));
+    throw new Error(error.detail || "Failed to fetch upload status");
+  }
+
+  return response.json();
+}
+
+/**
+ * Upload video and wait for analysis to complete (polling)
+ */
+export async function uploadVideoAndWaitForAnalysis(
+  file: File,
+  onProgress?: (status: UploadStatus) => void
+): Promise<{ jobId: string }> {
+  // 1. Upload file (returns immediately with job_id)
+  console.log("📤 Uploading video:", file.name);
+  const uploadResult = await uploadVideo(file);
+  const jobId = uploadResult.job_id;
+
+  console.log("📋 Job created:", jobId, "- Polling for analysis completion...");
+
+  // 2. Poll for analysis completion
+  const maxAttempts = 120; // 10 minutes max (5s interval)
+  const pollInterval = 5000; // 5 seconds
+
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    try {
+      const status = await getUploadStatus(jobId);
+
+      if (onProgress) {
+        onProgress(status);
+      }
+
+      if (status.status === "completed") {
+        console.log("✅ Analysis completed for job:", jobId);
+        return { jobId };
+      }
+
+      if (status.status === "failed") {
+        throw new Error(`Analysis failed: ${status.message}`);
+      }
+
+      // Still processing, wait and retry
+      console.log(`⏳ Analysis in progress (${attempt + 1}/${maxAttempts}): ${status.message}`);
+      await new Promise(resolve => setTimeout(resolve, pollInterval));
+
+    } catch (error) {
+      // On network error, wait and retry
+      console.warn(`⚠️ Status check failed, retrying...`, error);
+      await new Promise(resolve => setTimeout(resolve, pollInterval));
+    }
+  }
+
+  throw new Error("Analysis timed out after 10 minutes");
 }
 
 /**

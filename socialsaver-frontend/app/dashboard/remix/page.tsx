@@ -27,7 +27,8 @@ import type {
 
 // 🔌 Real API Integration
 import {
-  uploadVideo,
+  uploadVideoAndWaitForAnalysis,
+  getUploadStatus,
   getStoryboard,
   getStoryTheme,
   getScriptAnalysis,
@@ -603,17 +604,24 @@ export default function RemixPage() {
     setApiError(null)
 
     try {
-      // 🔌 Real API Call: Upload video and trigger analysis
+      // 🔌 Real API Call: Upload video and wait for analysis (async mode with polling)
       const videoFile = files[0]
       if (!videoFile) {
         throw new Error("No video file selected")
       }
 
-      console.log("📤 Uploading video:", videoFile.name)
-      const uploadResult = await uploadVideo(videoFile)
-      console.log("✅ Upload complete, job_id:", uploadResult.job_id)
+      console.log("📤 Uploading video (async mode):", videoFile.name)
 
-      setCurrentJobId(uploadResult.job_id)
+      // Upload and poll for analysis completion
+      const { jobId } = await uploadVideoAndWaitForAnalysis(videoFile, (status) => {
+        console.log(`📊 Analysis status: ${status.status} - ${status.message}`)
+      })
+
+      console.log("✅ Analysis complete, job_id:", jobId)
+      setCurrentJobId(jobId)
+
+      // Use jobId for subsequent calls
+      const uploadResult = { job_id: jobId }
 
       // Poll for storyboard data (analysis happens automatically on backend)
       let retries = 0

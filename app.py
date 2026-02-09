@@ -188,30 +188,117 @@ class ShotUpdateRequest(BaseModel):
 async def read_index():
     return FileResponse('index.html')
 
-@app.post("/api/upload")
-async def upload_video(file: UploadFile = File(...)):
-    print(f"📥 [收到文件] 正在接收上传: {file.filename}") 
+# ============================================================
+# 异步上传分析追踪
+# ============================================================
+upload_analysis_tasks: Dict[str, Dict[str, Any]] = {}
+
+
+def _run_upload_analysis_background(job_id: str, video_path: Path):
+    """后台执行视频分析"""
     try:
-        temp_dir = Path("temp_uploads")
-        temp_dir.mkdir(exist_ok=True)
-        temp_file_path = temp_dir / f"{uuid.uuid4()}_{file.filename}"
-        
-        with open(temp_file_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
-        
-        print(f"🧠 [AI 启动] 正在调用 Gemini 2.0 Flash 拆解分镜，请耐心等待...")
-        new_job_id = manager.initialize_from_file(temp_file_path)
-        
-        if temp_file_path.exists():
-            os.remove(temp_file_path)
-            
-        print(f"✅ [全部完成] 新项目已就绪: {new_job_id}")
-        return {"status": "success", "job_id": new_job_id}
+        upload_analysis_tasks[job_id] = {
+            "status": "analyzing",
+            "stage": "gemini",
+            "message": "正在通过 AI 分析视频...",
+            "started_at": datetime.now().isoformat()
+        }
+
+        print(f"🧠 [AI 启动] 正在调用 Gemini 2.0 Flash 拆解分镜: {job_id}...")
+
+        # 执行完整初始化 (Gemini + FFmpeg)
+        manager.job_id = job_id
+        manager.job_dir = Path("jobs") / job_id
+        manager._complete_initialization(video_path)
+
+        upload_analysis_tasks[job_id] = {
+            "status": "completed",
+            "stage": "done",
+            "message": "分析完成",
+            "completed_at": datetime.now().isoformat()
+        }
+        print(f"✅ [全部完成] 新项目已就绪: {job_id}")
+
     except Exception as e:
-        print(f"❌ [报错] 上传拆解环节出错: {str(e)}")
+        print(f"❌ [后台分析失败] {job_id}: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        upload_analysis_tasks[job_id] = {
+            "status": "failed",
+            "stage": "error",
+            "message": str(e),
+            "failed_at": datetime.now().isoformat()
+        }
+
+
+@app.post("/api/upload")
+async def upload_video(file: UploadFile = File(...), background_tasks: BackgroundTasks = None):
+    """
+    异步上传模式：立即返回 job_id，后台执行分析
+    前端通过 /api/job/{job_id}/upload-status 轮询进度
+    """
+    print(f"📥 [收到文件] 正在接收上传: {file.filename}")
+    try:
+        # 1. 创建 job 目录
+        new_job_id = f"job_{uuid.uuid4().hex[:8]}"
+        job_dir = Path("jobs") / new_job_id
+        job_dir.mkdir(parents=True, exist_ok=True)
+        (job_dir / "frames").mkdir(exist_ok=True)
+        (job_dir / "videos").mkdir(exist_ok=True)
+        (job_dir / "source_segments").mkdir(exist_ok=True)
+        (job_dir / "stylized_frames").mkdir(exist_ok=True)
+
+        # 2. 保存视频到 job 目录
+        video_path = job_dir / "input.mp4"
+        with open(video_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+
+        print(f"📁 [已保存] 视频已保存到: {video_path}")
+
+        # 3. 初始化状态
+        upload_analysis_tasks[new_job_id] = {
+            "status": "queued",
+            "stage": "upload",
+            "message": "上传完成，等待分析...",
+            "queued_at": datetime.now().isoformat()
+        }
+
+        # 4. 启动后台分析
+        background_tasks.add_task(_run_upload_analysis_background, new_job_id, video_path)
+
+        print(f"🚀 [异步模式] 已返回 job_id，分析在后台进行: {new_job_id}")
+
+        # 5. 立即返回 (不等待分析完成)
+        return {
+            "status": "processing",
+            "job_id": new_job_id,
+            "message": "上传成功，分析正在后台进行，请轮询状态"
+        }
+
+    except Exception as e:
+        print(f"❌ [报错] 上传环节出错: {str(e)}")
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/job/{job_id}/upload-status")
+async def get_upload_status(job_id: str):
+    """获取上传分析状态（用于前端轮询）"""
+    if job_id in upload_analysis_tasks:
+        return upload_analysis_tasks[job_id]
+
+    # 检查 job 是否存在
+    job_dir = Path("jobs") / job_id
+    if job_dir.exists():
+        # job 存在但不在追踪中 = 之前完成的 job
+        workflow_path = job_dir / "workflow.json"
+        if workflow_path.exists():
+            return {"status": "completed", "stage": "done", "message": "分析已完成"}
+        else:
+            return {"status": "unknown", "stage": "unknown", "message": "Job 存在但状态未知"}
+
+    raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
 
 @app.get("/api/workflow")
 async def get_workflow(job_id: Optional[str] = None):
