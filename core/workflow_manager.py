@@ -236,7 +236,8 @@ class WorkflowManager:
             if result.get("status") == "success":
                 print(f"✅ [Film IR] Story Theme analysis completed")
                 # 🎯 关键：Film IR 分析完成后，根据 representativeTimestamp 重新提取帧
-                self._reextract_frames_from_film_ir(final_video_path)
+                video_path = self.job_dir / "input.mp4"
+                self._reextract_frames_from_film_ir(video_path)
             else:
                 print(f"⚠️ [Film IR] Story Theme analysis: {result.get('reason', 'unknown error')}")
         except Exception as e:
@@ -336,6 +337,10 @@ class WorkflowManager:
     def _run_gemini_analysis(self, video_path: Path):
         from google.genai import types
         api_key = os.getenv("GEMINI_API_KEY")
+        # Sanitize API key to remove non-ASCII characters (fixes encoding errors in HTTP headers)
+        if api_key:
+            api_key = api_key.strip()
+            api_key = ''.join(c for c in api_key if c.isascii() and c.isprintable())
         client = genai.Client(api_key=api_key)
         uploaded = client.files.upload(file=str(video_path))
         video_file = wait_until_file_active(client, uploaded)

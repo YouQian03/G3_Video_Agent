@@ -11,6 +11,9 @@ class AgentEngine:
         api_key = os.getenv("GEMINI_API_KEY")
         if not api_key:
             raise RuntimeError("未检测到 GEMINI_API_KEY")
+        # Sanitize API key to remove non-ASCII characters (fixes encoding errors in HTTP headers)
+        api_key = api_key.strip()
+        api_key = ''.join(c for c in api_key if c.isascii() and c.isprintable())
         self.client = genai.Client(api_key=api_key)
         self.model_id = "gemini-3-flash-preview" 
 

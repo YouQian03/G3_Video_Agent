@@ -130,6 +130,9 @@ def ensure_api_key() -> str:
             '  export GEMINI_API_KEY="你的key"\n'
             "然后再运行本脚本。"
         )
+    # Sanitize API key to remove non-ASCII characters (fixes encoding errors in HTTP headers)
+    api_key = api_key.strip()
+    api_key = ''.join(c for c in api_key if c.isascii() and c.isprintable())
     return api_key
 
 

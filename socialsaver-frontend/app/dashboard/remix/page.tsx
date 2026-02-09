@@ -1023,40 +1023,64 @@ export default function RemixPage() {
       const maxPollAttempts = 300 // 25 minutes max (300 * 5s) - serial mode needs longer time
       let finalVideoCount = 0
 
+      let consecutiveErrors = 0
+      const maxConsecutiveErrors = 5 // Allow 5 consecutive errors before giving up
+
       while (pollAttempts < maxPollAttempts) {
-        const status = await getJobStatus(currentJobId)
-        finalVideoCount = status.videoGeneratedCount
+        try {
+          const status = await getJobStatus(currentJobId)
+          consecutiveErrors = 0 // Reset error counter on success
 
-        // Check if paused due to circuit breaker
-        const isPaused = status.globalStages?.video_gen === "PAUSED"
+          // Handle unknown status (backend temporarily unavailable)
+          if (status.status === "unknown") {
+            console.warn(`[Poll] Backend temporarily unavailable, continuing to wait...`)
+            await new Promise(resolve => setTimeout(resolve, 5000))
+            pollAttempts++
+            continue
+          }
 
-        setGenerationProgress({
-          stage: "generating",
-          currentShot: status.videoGeneratedCount,
-          totalShots: status.totalShots,
-          message: isPaused
-            ? `⚠️ Generation paused (API limit). ${status.videoGeneratedCount} of ${status.totalShots} complete.`
-            : `Generating videos (serial): ${status.videoGeneratedCount} of ${status.totalShots} complete...`
-        })
+          finalVideoCount = status.videoGeneratedCount
 
-        // Check if completed or paused
-        if (status.videoGeneratedCount >= status.totalShots) {
-          break
-        }
+          // Check if paused due to circuit breaker
+          const isPaused = status.globalStages?.video_gen === "PAUSED"
 
-        // Check if paused due to circuit breaker
-        if (isPaused) {
-          console.warn(`🛑 Video generation paused due to API limits. ${status.videoGeneratedCount}/${status.totalShots} completed.`)
-          break
-        }
+          setGenerationProgress({
+            stage: "generating",
+            currentShot: status.videoGeneratedCount,
+            totalShots: status.totalShots || totalShots,
+            message: isPaused
+              ? `⚠️ Generation paused (API limit). ${status.videoGeneratedCount} of ${status.totalShots} complete.`
+              : `Generating videos (serial): ${status.videoGeneratedCount} of ${status.totalShots || totalShots} complete...`
+          })
 
-        // Check if there are still running tasks
-        // Note: In serial mode runningCount may be 0 during cooldown, need to check global video_gen status
-        const isGlobalRunning = status.globalStages?.video_gen === "RUNNING"
-        if (status.runningCount === 0 && status.videoGeneratedCount < status.totalShots && !isGlobalRunning) {
-          // No running tasks and global stage not running - generation has stopped
-          console.warn(`Video generation completed with ${status.videoGeneratedCount}/${status.totalShots} videos (some may have failed due to API limits)`)
-          break
+          // Check if completed or paused
+          if (status.videoGeneratedCount >= status.totalShots) {
+            break
+          }
+
+          // Check if paused due to circuit breaker
+          if (isPaused) {
+            console.warn(`🛑 Video generation paused due to API limits. ${status.videoGeneratedCount}/${status.totalShots} completed.`)
+            break
+          }
+
+          // Check if there are still running tasks
+          // Note: In serial mode runningCount may be 0 during cooldown, need to check global video_gen status
+          const isGlobalRunning = status.globalStages?.video_gen === "RUNNING"
+          if (status.runningCount === 0 && status.videoGeneratedCount < status.totalShots && !isGlobalRunning) {
+            // No running tasks and global stage not running - generation has stopped
+            console.warn(`Video generation completed with ${status.videoGeneratedCount}/${status.totalShots} videos (some may have failed due to API limits)`)
+            break
+          }
+        } catch (pollError) {
+          consecutiveErrors++
+          console.warn(`[Poll] Error fetching status (${consecutiveErrors}/${maxConsecutiveErrors}):`, pollError)
+
+          if (consecutiveErrors >= maxConsecutiveErrors) {
+            console.error(`[Poll] Too many consecutive errors, stopping poll but videos may still be generating`)
+            // Don't throw - just break and try to merge whatever we have
+            break
+          }
         }
 
         await new Promise(resolve => setTimeout(resolve, 5000)) // Poll every 5 seconds
@@ -1557,16 +1581,6 @@ export default function RemixPage() {
                     
                     {/* Video Info & Actions */}
                     <div className="p-6">
-                      {/* Warning for partial generation */}
-                      {generationProgress.currentShot < generationProgress.totalShots && generationProgress.totalShots > 0 && (
-                        <div className="mb-4 p-3 bg-yellow-500/10 border border-yellow-500/30 rounded-lg">
-                          <p className="text-yellow-600 dark:text-yellow-400 text-sm">
-                            ⚠️ Only {generationProgress.currentShot} of {generationProgress.totalShots} shots were generated.
-                            Some shots failed due to API rate limits. The video contains available shots only.
-                          </p>
-                        </div>
-                      )}
-
                       <div className="flex items-center justify-between mb-4">
                         <div>
                           <h3 className="text-xl font-semibold text-foreground">Video Generated Successfully!</h3>
@@ -1636,6 +1650,16 @@ export default function RemixPage() {
                 {/* Show final storyboard for reference */}
                 {finalStoryboard && (
                   <StoryboardTable data={finalStoryboard} title="Final Storyboard Reference" />
+                )}
+
+                {/* Warning for partial generation - shown at bottom after storyboard */}
+                {generationProgress.currentShot < generationProgress.totalShots && generationProgress.totalShots > 0 && (
+                  <div className="mt-4 p-4 bg-yellow-500/10 border border-yellow-500/30 rounded-lg">
+                    <p className="text-yellow-600 dark:text-yellow-400 text-sm">
+                      ⚠️ Only {generationProgress.currentShot} of {generationProgress.totalShots} shots were generated.
+                      Some shots failed due to API rate limits. The video contains available shots only.
+                    </p>
+                  </div>
                 )}
               </div>
             )}

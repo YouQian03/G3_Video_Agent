@@ -15,12 +15,97 @@ Film IR Manager
 
 import os
 import json
+import time
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 from datetime import datetime
 
 from google import genai
 from google.genai import types
+
+
+def gemini_call_with_retry(client, model: str, contents: list, config=None, max_retries: int = 2, base_delay: float = 5.0):
+    """
+    带重试和自动降级的 Gemini API 调用
+
+    策略：
+    1. 使用指定模型重试 max_retries 次
+    2. 如果仍然失败，自动降级到 gemini-2.0-flash
+
+    Args:
+        client: Gemini 客户端
+        model: 模型名称
+        contents: 请求内容
+        config: 生成配置
+        max_retries: 最大重试次数（默认2次）
+        base_delay: 基础等待时间（秒）
+
+    Returns:
+        Gemini 响应
+    """
+    # 降级模型映射
+    fallback_model = "gemini-2.0-flash" if "3" in model else None
+
+    last_error = None
+    current_model = model
+
+    # 第一轮：使用原始模型重试
+    for attempt in range(max_retries + 1):
+        try:
+            if config:
+                response = client.models.generate_content(
+                    model=current_model,
+                    contents=contents,
+                    config=config
+                )
+            else:
+                response = client.models.generate_content(
+                    model=current_model,
+                    contents=contents
+                )
+            return response
+        except Exception as e:
+            error_str = str(e)
+            last_error = e
+
+            # 检查是否是可重试的错误 (503 过载, 429 限流)
+            if "503" in error_str or "overloaded" in error_str.lower() or "429" in error_str:
+                if attempt < max_retries:
+                    delay = base_delay * (2 ** attempt)  # 指数退避: 5s, 10s
+                    print(f"   ⏳ {current_model} overloaded, retrying in {delay:.0f}s... (attempt {attempt + 1}/{max_retries})")
+                    time.sleep(delay)
+                    continue
+                else:
+                    # 重试次数用完，尝试降级
+                    break
+            else:
+                # 其他错误直接抛出
+                raise
+
+    # 第二轮：降级到备用模型
+    if fallback_model and fallback_model != model:
+        print(f"   🔄 Falling back to {fallback_model}...")
+        try:
+            if config:
+                response = client.models.generate_content(
+                    model=fallback_model,
+                    contents=contents,
+                    config=config
+                )
+            else:
+                response = client.models.generate_content(
+                    model=fallback_model,
+                    contents=contents
+                )
+            print(f"   ✅ Fallback to {fallback_model} succeeded")
+            return response
+        except Exception as e:
+            print(f"   ❌ Fallback also failed: {e}")
+            # 降级也失败，抛出原始错误
+            raise last_error
+
+    # 无法降级，抛出原始错误
+    raise last_error
 
 from core.film_ir_schema import create_empty_film_ir, StageStatus
 from core.film_ir_io import (
@@ -49,8 +134,9 @@ from core.meta_prompts import (
     extract_shot_dialogue_timeline,
     create_shot_boundaries_text,
     merge_batch_results,
-    # Character Ledger (Pillar II extension)
-    CHARACTER_CLUSTERING_PROMPT,
+    # Character Ledger (Pillar II extension) - Split prompts for better extraction
+    CHARACTER_EXTRACTION_PROMPT,
+    ENVIRONMENT_EXTRACTION_PROMPT,
     build_shot_subjects_input,
     process_ledger_result,
     get_ledger_display_summary,
@@ -409,6 +495,9 @@ class FilmIRManager:
         api_key = os.getenv("GEMINI_API_KEY")
         if not api_key:
             raise RuntimeError("GEMINI_API_KEY not set")
+        # Sanitize API key to remove non-ASCII characters (fixes encoding errors in HTTP headers)
+        api_key = api_key.strip()
+        api_key = ''.join(c for c in api_key if c.isascii() and c.isprintable())
 
         client = genai.Client(api_key=api_key)
 
@@ -443,9 +532,10 @@ class FilmIRManager:
             "[Video file attached - analyze the visual and audio content]"
         )
 
-        # 调用 Gemini API
+        # 调用 Gemini API (带 503 重试)
         print(f"🤖 Calling Gemini API for Story Theme analysis...")
-        response = client.models.generate_content(
+        response = gemini_call_with_retry(
+            client=client,
             model="gemini-3-flash-preview",
             contents=[prompt, uploaded_file],
             config=types.GenerateContentConfig(
@@ -453,15 +543,10 @@ class FilmIRManager:
             )
         )
 
-        # 解析 JSON 响应
-        try:
-            result = json.loads(response.text)
-            print(f"✅ Story Theme analysis received")
-            return result
-        except json.JSONDecodeError as e:
-            print(f"❌ Failed to parse JSON response: {e}")
-            print(f"Raw response: {response.text[:500]}...")
-            raise
+        # 解析 JSON 响应 - 使用增强的解析器处理转义序列等问题
+        result = self._parse_json_response(response.text, "Story Theme")
+        print(f"✅ Story Theme analysis received")
+        return result
 
     def _analyze_narrative(self, uploaded_file, client) -> Optional[Dict[str, Any]]:
         """
@@ -480,9 +565,10 @@ class FilmIRManager:
             "[Video file attached - analyze the narrative structure, characters, and story arc]"
         )
 
-        # 调用 Gemini API
+        # 调用 Gemini API (带 503 重试)
         print(f"🤖 Calling Gemini API for Narrative extraction...")
-        response = client.models.generate_content(
+        response = gemini_call_with_retry(
+            client=client,
             model="gemini-3-flash-preview",
             contents=[prompt, uploaded_file],
             config=types.GenerateContentConfig(
@@ -490,15 +576,10 @@ class FilmIRManager:
             )
         )
 
-        # 解析 JSON 响应
-        try:
-            result = json.loads(response.text)
-            print(f"✅ Narrative extraction received")
-            return result
-        except json.JSONDecodeError as e:
-            print(f"❌ Failed to parse JSON response: {e}")
-            print(f"Raw response: {response.text[:500]}...")
-            raise
+        # 解析 JSON 响应 - 使用增强的解析器处理转义序列等问题
+        result = self._parse_json_response(response.text, "Narrative")
+        print(f"✅ Narrative extraction received")
+        return result
 
     def _analyze_shot_recipe(self, uploaded_file, client, batch_size: int = 8) -> Optional[Dict[str, Any]]:
         """
@@ -528,7 +609,8 @@ class FilmIRManager:
             "[Video file attached - detect shot boundaries and extract basic metadata]"
         )
 
-        response = client.models.generate_content(
+        response = gemini_call_with_retry(
+            client=client,
             model="gemini-3-flash-preview",
             contents=[phase1_prompt, uploaded_file],
             config=types.GenerateContentConfig(
@@ -536,15 +618,11 @@ class FilmIRManager:
             )
         )
 
-        try:
-            phase1_result = json.loads(response.text)
-            shots_basic = phase1_result.get("shotRecipe", {}).get("shots", [])
-            total_shots = len(shots_basic)
-            print(f"✅ [Phase 1] Detected {total_shots} shots")
-        except json.JSONDecodeError as e:
-            print(f"❌ [Phase 1] Failed to parse JSON: {e}")
-            print(f"Raw response: {response.text[:500]}...")
-            raise
+        # 使用增强的解析器处理转义序列等问题
+        phase1_result = self._parse_json_response(response.text, "Shot Phase 1")
+        shots_basic = phase1_result.get("shotRecipe", {}).get("shots", [])
+        total_shots = len(shots_basic)
+        print(f"✅ [Phase 1] Detected {total_shots} shots")
 
         if total_shots == 0:
             print(f"⚠️ No shots detected, returning Phase 1 result as-is")
@@ -578,58 +656,35 @@ class FilmIRManager:
                 "[Video file attached - extract detailed parameters for specified shots]"
             )
 
-            # 调用 API (带重试)
-            max_retries = 2
+            # 调用 API (带 503 重试 + JSON 解析重试)
             batch_success = False
+            batch_result = self._process_batch_with_fallback(
+                client=client,
+                uploaded_file=uploaded_file,
+                batch_prompt=batch_prompt,
+                shots_basic=shots_basic,
+                start_idx=start_idx,
+                end_idx=end_idx,
+                batch_idx=batch_idx,
+                total_shots=total_shots
+            )
 
-            for retry in range(max_retries):
-                try:
-                    # Rate limiting: 避免过快请求
-                    if batch_idx > 0 or retry > 0:
-                        time.sleep(2)
-
-                    response = client.models.generate_content(
-                        model="gemini-3-flash-preview",
-                        contents=[batch_prompt, uploaded_file],
-                        config=types.GenerateContentConfig(
-                            response_mime_type="application/json"
-                        )
-                    )
-
-                    batch_result = json.loads(response.text)
-                    batch_results.append(batch_result)
-                    batch_success = True
-                    print(f"✅ [Phase 2] Batch {batch_idx + 1} completed")
-                    break
-
-                except json.JSONDecodeError as e:
-                    print(f"⚠️ [Phase 2] Batch {batch_idx + 1} retry {retry + 1}/{max_retries}: JSON parse error")
-                    if retry == max_retries - 1:
-                        # 记录降级信息
-                        degraded_batch = {
-                            "batchIndex": batch_idx,
-                            "startIdx": start_idx,
-                            "endIdx": end_idx,
-                            "shotIds": [s.get("shotId") for s in shots_basic[start_idx:end_idx]],
-                            "reason": f"JSON truncated: {str(e)[:100]}",
-                            "timestamp": datetime.now().isoformat()
-                        }
-                        degraded_batches.append(degraded_batch)
-                        print(f"⚠️ [Phase 2] Batch {batch_idx + 1} DEGRADED - using Phase 1 data")
-
-                except Exception as e:
-                    print(f"⚠️ [Phase 2] Batch {batch_idx + 1} retry {retry + 1}/{max_retries}: {e}")
-                    if retry == max_retries - 1:
-                        degraded_batch = {
-                            "batchIndex": batch_idx,
-                            "startIdx": start_idx,
-                            "endIdx": end_idx,
-                            "shotIds": [s.get("shotId") for s in shots_basic[start_idx:end_idx]],
-                            "reason": str(e)[:100],
-                            "timestamp": datetime.now().isoformat()
-                        }
-                        degraded_batches.append(degraded_batch)
-                        print(f"⚠️ [Phase 2] Batch {batch_idx + 1} DEGRADED - using Phase 1 data")
+            if batch_result is not None:
+                batch_results.append(batch_result)
+                batch_success = True
+                print(f"✅ [Phase 2] Batch {batch_idx + 1} completed")
+            else:
+                # 记录降级信息
+                degraded_batch = {
+                    "batchIndex": batch_idx,
+                    "startIdx": start_idx,
+                    "endIdx": end_idx,
+                    "shotIds": [s.get("shotId") for s in shots_basic[start_idx:end_idx]],
+                    "reason": "All retries and split attempts failed",
+                    "timestamp": datetime.now().isoformat()
+                }
+                degraded_batches.append(degraded_batch)
+                print(f"⚠️ [Phase 2] Batch {batch_idx + 1} DEGRADED - using Phase 1 data")
 
         # ============================================================
         # 合并结果
@@ -648,16 +703,236 @@ class FilmIRManager:
 
         return merged_result
 
+    def _try_fix_json(self, broken_json: str) -> Optional[dict]:
+        """
+        尝试修复截断的 JSON
+
+        常见问题：
+        1. JSON 在中间被截断，缺少闭合括号
+        2. 最后一个元素不完整
+        """
+        import re
+
+        text = broken_json.strip()
+
+        # 如果已经是有效 JSON，直接返回
+        try:
+            return json.loads(text)
+        except:
+            pass
+
+        # 尝试修复策略 1: 补全缺失的括号
+        # 统计未闭合的括号
+        open_braces = text.count('{') - text.count('}')
+        open_brackets = text.count('[') - text.count(']')
+
+        if open_braces > 0 or open_brackets > 0:
+            # 删除最后一个不完整的元素（通常在逗号后面）
+            # 找到最后一个完整的 } 或 ]
+            last_complete_idx = max(text.rfind('}'), text.rfind(']'))
+            if last_complete_idx > 0:
+                text = text[:last_complete_idx + 1]
+
+            # 重新计算
+            open_braces = text.count('{') - text.count('}')
+            open_brackets = text.count('[') - text.count(']')
+
+            # 补全括号
+            text += ']' * open_brackets + '}' * open_braces
+
+            try:
+                return json.loads(text)
+            except:
+                pass
+
+        # 尝试修复策略 2: 提取 shots 数组
+        shots_match = re.search(r'"shots"\s*:\s*\[', text)
+        if shots_match:
+            start_idx = shots_match.end() - 1  # 从 [ 开始
+            # 找到所有完整的 shot 对象
+            bracket_count = 0
+            last_complete_shot_end = start_idx
+            i = start_idx
+            while i < len(text):
+                if text[i] == '[':
+                    bracket_count += 1
+                elif text[i] == ']':
+                    bracket_count -= 1
+                    if bracket_count == 0:
+                        last_complete_shot_end = i
+                        break
+                elif text[i] == '}' and bracket_count == 1:
+                    # 可能是一个完整的 shot 对象结束
+                    last_complete_shot_end = i
+                i += 1
+
+            if last_complete_shot_end > start_idx:
+                shots_text = text[start_idx:last_complete_shot_end + 1]
+                # 确保闭合
+                if not shots_text.endswith(']'):
+                    shots_text += ']'
+                try:
+                    shots = json.loads(shots_text)
+                    return {"shots": shots}
+                except:
+                    pass
+
+        return None
+
+    def _process_batch_with_fallback(
+        self,
+        client,
+        uploaded_file,
+        batch_prompt: str,
+        shots_basic: List[dict],
+        start_idx: int,
+        end_idx: int,
+        batch_idx: int,
+        total_shots: int
+    ) -> Optional[dict]:
+        """
+        处理单个批次，带多层重试和拆分回退
+
+        策略:
+        1. 主批次重试 3 次
+        2. 尝试 JSON 修复
+        3. 如果仍失败且批次 > 4 个 shot，拆分成两半分别处理
+        """
+        max_retries = 3
+        last_response_text = ""
+
+        for retry in range(max_retries):
+            try:
+                # Rate limiting
+                if batch_idx > 0 or retry > 0:
+                    time.sleep(2)
+
+                response = gemini_call_with_retry(
+                    client=client,
+                    model="gemini-3-flash-preview",
+                    contents=[batch_prompt, uploaded_file],
+                    config=types.GenerateContentConfig(
+                        response_mime_type="application/json"
+                    )
+                )
+
+                last_response_text = response.text
+                batch_result = self._parse_json_response(response.text, f"Shot Batch {batch_idx + 1}")
+
+                # Debug: 打印返回的数据结构
+                if isinstance(batch_result, dict):
+                    shots_in_batch = batch_result.get("shots", [])
+                    if shots_in_batch and len(shots_in_batch) > 0:
+                        first_shot = shots_in_batch[0]
+                        has_concrete = "concrete" in first_shot
+                        shot_keys = list(first_shot.keys())[:5]  # 只显示前5个键
+                        print(f"   📋 Batch structure: {len(shots_in_batch)} shots, concrete_nested={has_concrete}, keys={shot_keys}")
+
+                return batch_result
+
+            except json.JSONDecodeError as e:
+                print(f"⚠️ [Phase 2] Batch {batch_idx + 1} retry {retry + 1}/{max_retries}: JSON parse error")
+
+                # 尝试修复 JSON
+                if last_response_text:
+                    fixed = self._try_fix_json(last_response_text)
+                    if fixed:
+                        print(f"   🔧 JSON repair successful")
+                        return fixed
+
+            except Exception as e:
+                print(f"⚠️ [Phase 2] Batch {batch_idx + 1} retry {retry + 1}/{max_retries}: {e}")
+
+        # 所有重试都失败了，尝试拆分批次
+        batch_size = end_idx - start_idx
+        if batch_size > 4:
+            print(f"   🔀 Splitting batch {batch_idx + 1} into smaller chunks...")
+            mid = start_idx + batch_size // 2
+
+            # 处理前半部分
+            first_half = self._process_single_split(
+                client, uploaded_file, shots_basic, start_idx, mid, total_shots, "A"
+            )
+
+            # 处理后半部分
+            second_half = self._process_single_split(
+                client, uploaded_file, shots_basic, mid, end_idx, total_shots, "B"
+            )
+
+            # 合并结果
+            if first_half or second_half:
+                combined_shots = []
+                if first_half:
+                    combined_shots.extend(first_half.get("shots", []))
+                if second_half:
+                    combined_shots.extend(second_half.get("shots", []))
+
+                if combined_shots:
+                    print(f"   ✅ Split recovery: {len(combined_shots)} shots extracted")
+                    return {"shots": combined_shots}
+
+        return None
+
+    def _process_single_split(
+        self,
+        client,
+        uploaded_file,
+        shots_basic: List[dict],
+        start_idx: int,
+        end_idx: int,
+        total_shots: int,
+        split_label: str
+    ) -> Optional[dict]:
+        """处理拆分后的小批次"""
+        shot_boundaries = create_shot_boundaries_text(shots_basic, start_idx, end_idx)
+        split_prompt = SHOT_DETAIL_BATCH_PROMPT.replace(
+            "{batch_start}", str(start_idx + 1)
+        ).replace(
+            "{batch_end}", str(end_idx)
+        ).replace(
+            "{total_shots}", str(total_shots)
+        ).replace(
+            "{shot_boundaries}", shot_boundaries
+        ).replace(
+            "{input_content}",
+            "[Video file attached - extract detailed parameters for specified shots]"
+        )
+
+        try:
+            time.sleep(2)
+            response = gemini_call_with_retry(
+                client=client,
+                model="gemini-3-flash-preview",
+                contents=[split_prompt, uploaded_file],
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json"
+                )
+            )
+
+            # 使用增强的解析器处理转义序列等问题
+            result = self._parse_json_response(response.text, f"Shot Split {split_label}")
+            print(f"      ✅ Split {split_label} completed ({start_idx + 1}-{end_idx})")
+            return result
+
+        except json.JSONDecodeError as e:
+            print(f"      ❌ Split {split_label} JSON parse failed: {e}")
+            return None
+
+        except Exception as e:
+            print(f"      ❌ Split {split_label} error: {e}")
+            return None
+
     def _generate_character_ledger(
         self,
         shots: List[Dict[str, Any]],
         client
     ) -> Optional[Dict[str, Any]]:
         """
-        两阶段角色识别：从 shots 中提取并聚类角色/实体
+        分离式角色/环境识别：使用两个独立的专用提示词
 
-        Phase 1: 提取所有 shot subjects
-        Phase 2: 调用 Gemini 聚类成唯一实体
+        Step 1: 调用 CHARACTER_EXTRACTION_PROMPT 提取所有角色
+        Step 2: 调用 ENVIRONMENT_EXTRACTION_PROMPT 提取所有环境
+        Step 3: 合并结果
 
         Args:
             shots: Pillar III 的 concrete shots 列表
@@ -666,33 +941,138 @@ class FilmIRManager:
         Returns:
             处理后的 character ledger 数据
         """
-        # Phase 1: 构建 shot subjects 输入
+        # 构建 shot subjects 输入
+        print(f"📊 [Character Ledger] Input: {len(shots)} shots to analyze")
         shot_subjects_text = build_shot_subjects_input(shots)
+        print(f"📝 [Character Ledger] Shot subjects text length: {len(shot_subjects_text)} chars")
 
-        # Phase 2: 调用 Gemini 进行聚类
-        prompt = CHARACTER_CLUSTERING_PROMPT.replace(
-            "{shot_subjects}",
-            shot_subjects_text
-        )
+        # 🔍 DEBUG: Print first and last shot to verify all shots are included
+        if shots:
+            print(f"   First shot: {shots[0].get('shotId')} - {shots[0].get('subject', 'N/A')[:50]}...")
+            if len(shots) > 1:
+                print(f"   Last shot: {shots[-1].get('shotId')} - {shots[-1].get('subject', 'N/A')[:50]}...")
 
-        print(f"🤖 Calling Gemini API for Character Clustering...")
-        response = client.models.generate_content(
+        all_shot_ids = [shot.get("shotId") for shot in shots if shot.get("shotId")]
+
+        # ============================================================
+        # Step 1: 角色提取 (Character Extraction)
+        # ============================================================
+        char_prompt = CHARACTER_EXTRACTION_PROMPT.replace("{shot_subjects}", shot_subjects_text)
+        print(f"🎭 [Step 1] Extracting characters...")
+
+        char_response = gemini_call_with_retry(
+            client=client,
             model="gemini-3-flash-preview",
-            contents=[prompt],
+            contents=[char_prompt],
             config=types.GenerateContentConfig(
-                response_mime_type="application/json"
+                response_mime_type="application/json",
+                temperature=0.1  # Low temperature for deterministic extraction
             )
         )
 
-        # 解析并处理结果
         try:
-            raw_result = json.loads(response.text)
-            print(f"✅ Character Clustering received")
-            return process_ledger_result(raw_result)
+            char_result = json.loads(char_response.text)
+            raw_chars = char_result.get("characters", [])
+            print(f"   ✅ Found {len(raw_chars)} characters")
+
+            # Log which shots are covered by characters
+            char_shots = set()
+            for c in raw_chars:
+                char_shots.update(c.get("appearsInShots", []))
+            print(f"   📊 Characters cover {len(char_shots)}/{len(all_shot_ids)} shots")
+
         except json.JSONDecodeError as e:
-            print(f"❌ Failed to parse Character Ledger JSON: {e}")
-            print(f"Raw response: {response.text[:500]}...")
-            raise
+            print(f"   ❌ Failed to parse characters JSON: {e}")
+            print(f"   Raw response: {char_response.text[:300]}...")
+            raw_chars = []
+
+        # ============================================================
+        # Step 2: 环境提取 (Environment Extraction)
+        # ============================================================
+        env_prompt = ENVIRONMENT_EXTRACTION_PROMPT.replace("{shot_subjects}", shot_subjects_text)
+        print(f"🏠 [Step 2] Extracting environments...")
+
+        env_response = gemini_call_with_retry(
+            client=client,
+            model="gemini-3-flash-preview",
+            contents=[env_prompt],
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json",
+                temperature=0.1  # Low temperature for deterministic extraction
+            )
+        )
+
+        try:
+            env_result = json.loads(env_response.text)
+            raw_envs = env_result.get("environments", [])
+            print(f"   ✅ Found {len(raw_envs)} environments")
+
+            # Log which shots are covered by environments
+            env_shots = set()
+            for e in raw_envs:
+                env_shots.update(e.get("appearsInShots", []))
+            print(f"   📊 Environments cover {len(env_shots)}/{len(all_shot_ids)} shots")
+
+            # Check for missing shots
+            missing = set(all_shot_ids) - env_shots
+            if missing:
+                print(f"   ⚠️ Missing shots: {sorted(missing)}")
+
+        except json.JSONDecodeError as e:
+            print(f"   ❌ Failed to parse environments JSON: {e}")
+            print(f"   Raw response: {env_response.text[:300]}...")
+            raw_envs = []
+
+        # ============================================================
+        # Step 3: 合并结果并转换格式
+        # ============================================================
+        # Convert to legacy format for compatibility
+        character_ledger = []
+        for i, char in enumerate(raw_chars):
+            character_ledger.append({
+                "entityId": char.get("entityId", f"orig_char_{i+1:02d}"),
+                "entityType": "CHARACTER",
+                "importance": char.get("importance", "SECONDARY"),
+                "displayName": char.get("displayName", "Unknown"),
+                "visualSignature": char.get("visualDescription", "")[:100],
+                "detailedDescription": char.get("visualDescription", ""),
+                "appearsInShots": char.get("appearsInShots", []),
+                "shotCount": len(char.get("appearsInShots", [])),
+                "trackingConfidence": "HIGH",
+                "visualCues": []
+            })
+
+        environment_ledger = []
+        for i, env in enumerate(raw_envs):
+            environment_ledger.append({
+                "entityId": env.get("entityId", f"orig_env_{i+1:02d}"),
+                "entityType": "ENVIRONMENT",
+                "importance": env.get("importance", "SECONDARY"),
+                "displayName": env.get("displayName", "Unknown"),
+                "visualSignature": env.get("visualDescription", "")[:100],
+                "detailedDescription": env.get("visualDescription", ""),
+                "appearsInShots": env.get("appearsInShots", []),
+                "shotCount": len(env.get("appearsInShots", []))
+            })
+
+        # Build combined result
+        combined_result = {
+            "clusteringSuccess": True,
+            "characterLedger": character_ledger,
+            "environmentLedger": environment_ledger,
+            "clusteringSummary": {
+                "totalCharacters": len(character_ledger),
+                "primaryCharacters": len([c for c in character_ledger if c["importance"] == "PRIMARY"]),
+                "secondaryCharacters": len([c for c in character_ledger if c["importance"] == "SECONDARY"]),
+                "totalEnvironments": len(environment_ledger),
+                "totalShots": len(all_shot_ids),
+                "unclusteredShots": []
+            }
+        }
+
+        print(f"✅ Character Ledger complete: {len(character_ledger)} characters, {len(environment_ledger)} environments")
+
+        return process_ledger_result(combined_result, all_shot_ids)
 
     def _init_identity_mapping(self, ledger_result: Dict[str, Any]) -> None:
         """
@@ -851,6 +1231,61 @@ class FilmIRManager:
                 print(f"   🔄 Environment remixed: {entity_id} → {env_map.get('toDescription', '')[:30]}...")
             else:
                 print(f"   ⚠️ Warning: Environment {entity_id} not found in Identity Mapping")
+
+        # ============================================================
+        # 全局替换检测：当用户说"所有角色"时，自动应用到未被明确 remix 的角色
+        # ============================================================
+        scope = parsed_intent.get("scope", "SINGLE_ELEMENT")
+        style_instruction = parsed_intent.get("styleInstruction", {})
+        subject_mappings = parsed_intent.get("subjectMapping", [])
+
+        # 检测是否是全局角色替换
+        # 条件：scope 是 GLOBAL 且有 artStyle 或至少有一个 subject mapping
+        is_global_character_remix = (
+            scope == "GLOBAL" and
+            (style_instruction.get("artStyle") or len(subject_mappings) > 0)
+        )
+
+        if is_global_character_remix and subject_mappings:
+            # 获取模板：使用第一个 subject mapping 作为模板
+            template_mapping = subject_mappings[0]
+            template_style = style_instruction.get("artStyle", "")
+            template_description = template_mapping.get("detailedDescription", "")
+
+            # 统计已被 remix 的角色 ID
+            remixed_char_ids = set(
+                sm.get("originalEntityId") for sm in subject_mappings
+                if sm.get("originalEntityId") and not sm.get("originalEntityId", "").startswith("new_")
+            )
+
+            # 遍历所有角色实体，为未被 remix 的应用模板
+            applied_count = 0
+            for entity_id, mapping in identity_mapping.items():
+                if mapping.get("entityType") == "CHARACTER" and entity_id not in remixed_char_ids:
+                    if not mapping.get("isRemixed"):
+                        # 获取原始角色信息
+                        original_entity = mapping.get("originalEntity", {})
+                        original_name = original_entity.get("displayName", "Unknown Character") if original_entity else "Unknown Character"
+
+                        # 使用模板生成新描述
+                        # 将模板中的描述应用到这个角色（保持角色的原始特征但应用新风格）
+                        adapted_description = f"{template_style} version of {original_name}. " + template_description if template_style else template_description
+
+                        mapping["remixedEntity"] = {
+                            "toDescription": f"{template_style} {original_name}" if template_style else original_name,
+                            "detailedDescription": adapted_description,
+                            "persistentAttributes": template_mapping.get("persistentAttributes", []),
+                            "imageReference": None,
+                            "affectedShots": ["all"],
+                            "isNewEntity": False,
+                            "autoApplied": True  # 标记为自动应用
+                        }
+                        mapping["isRemixed"] = True
+                        mapping["bindingStatus"] = "REMIXED_AUTO"
+                        applied_count += 1
+
+            if applied_count > 0:
+                print(f"   🔁 Auto-applied global style to {applied_count} additional characters")
 
         # 保存更新
         self.ir["pillars"]["IV_renderStrategy"]["identityMapping"] = identity_mapping
@@ -1079,6 +1514,9 @@ class FilmIRManager:
         api_key = os.getenv("GEMINI_API_KEY")
         if not api_key:
             raise RuntimeError("GEMINI_API_KEY not set")
+        # Sanitize API key to remove non-ASCII characters (fixes encoding errors in HTTP headers)
+        api_key = api_key.strip()
+        api_key = ''.join(c for c in api_key if c.isascii() and c.isprintable())
 
         client = genai.Client(api_key=api_key)
 
@@ -1193,6 +1631,9 @@ class FilmIRManager:
         api_key = os.getenv("GEMINI_API_KEY")
         if not api_key:
             raise RuntimeError("GEMINI_API_KEY not set")
+        # Sanitize API key to remove non-ASCII characters (fixes encoding errors in HTTP headers)
+        api_key = api_key.strip()
+        api_key = ''.join(c for c in api_key if c.isascii() and c.isprintable())
 
         client = genai.Client(api_key=api_key)
 
@@ -1227,8 +1668,8 @@ class FilmIRManager:
     def _extract_unique_subjects_and_scenes(
         self,
         concrete_reference: Dict[str, Any],
-        max_subjects: int = 5,
-        max_environments: int = 3
+        max_subjects: int = 50,
+        max_environments: int = 20
     ) -> Dict[str, List[Dict]]:
         """
         从 concrete 层提取独特的主体和场景
@@ -1315,8 +1756,8 @@ class FilmIRManager:
         parsed_intent: Dict[str, Any],
         abstract_template: Dict[str, Any],
         concrete_reference: Dict[str, Any],
-        max_character_anchors: int = 3,
-        max_environment_anchors: int = 2
+        max_character_anchors: int = 50,
+        max_environment_anchors: int = 20
     ) -> Dict[str, Any]:
         """
         生成 Identity Anchors (角色和环境的详细描述)
@@ -1325,12 +1766,17 @@ class FilmIRManager:
         - 优先使用 parsed_intent 中的 detailedDescription（来自 Intent Parser 的 80-120 词描述）
         - 参考 Identity Mapping 中的 remixedEntity 数据
         - 为未被 remix 的实体保留原始描述
+        - 支持全局替换：当 scope=GLOBAL 时，为所有角色生成 anchors
 
         Args:
-            max_character_anchors: 最多生成几个角色 anchor（测试时限制）
-            max_environment_anchors: 最多生成几个环境 anchor（测试时限制）
+            max_character_anchors: 最多生成几个角色 anchor（默认 50，足够覆盖大多数视频）
+            max_environment_anchors: 最多生成几个环境 anchor（默认 20）
         """
         api_key = os.getenv("GEMINI_API_KEY")
+        # Sanitize API key to remove non-ASCII characters (fixes encoding errors in HTTP headers)
+        if api_key:
+            api_key = api_key.strip()
+            api_key = ''.join(c for c in api_key if c.isascii() and c.isprintable())
         client = genai.Client(api_key=api_key)
 
         # 提取原始视频中的独特主体和场景
@@ -1340,7 +1786,7 @@ class FilmIRManager:
             max_environments=max_environment_anchors
         )
 
-        print(f"   📊 Found {len(unique_elements['subjects'])} unique subjects, {len(unique_elements['environments'])} unique environments (limited)")
+        print(f"   📊 Found {len(unique_elements['subjects'])} unique subjects, {len(unique_elements['environments'])} unique environments")
 
         # Phase 4: 获取 Identity Mapping 中的 remixedEntity 数据
         identity_mapping = self.ir["pillars"]["IV_renderStrategy"].get("identityMapping", {})
@@ -1468,6 +1914,10 @@ Output ONLY valid JSON. No markdown, no explanation.
         分批生成 Shot Prompts (T2I + I2V)
         """
         api_key = os.getenv("GEMINI_API_KEY")
+        # Sanitize API key to remove non-ASCII characters (fixes encoding errors in HTTP headers)
+        if api_key:
+            api_key = api_key.strip()
+            api_key = ''.join(c for c in api_key if c.isascii() and c.isprintable())
         client = genai.Client(api_key=api_key)
 
         # 构建镜头信息
@@ -1606,6 +2056,22 @@ Output ONLY valid JSON array. No markdown.
         s = re.sub(r'//.*?\n', '\n', s)
         s = re.sub(r'/\*.*?\*/', '', s, flags=re.DOTALL)
 
+        # 3. 修复无效的转义序列（如 \N, \n 在不该出现的地方）
+        # 先保护合法的转义序列
+        s = s.replace('\\\\', '<<<DOUBLE_BACKSLASH>>>')
+        s = s.replace('\\"', '<<<ESCAPED_QUOTE>>>')
+        s = s.replace('\\n', '<<<NEWLINE>>>')
+        s = s.replace('\\t', '<<<TAB>>>')
+        s = s.replace('\\r', '<<<CR>>>')
+        # 移除其他无效的反斜杠（在 JSON 字符串中不合法的转义）
+        s = re.sub(r'\\([^"\\nrtbfu/])', r'\1', s)
+        # 恢复合法的转义序列
+        s = s.replace('<<<DOUBLE_BACKSLASH>>>', '\\\\')
+        s = s.replace('<<<ESCAPED_QUOTE>>>', '\\"')
+        s = s.replace('<<<NEWLINE>>>', '\\n')
+        s = s.replace('<<<TAB>>>', '\\t')
+        s = s.replace('<<<CR>>>', '\\r')
+
         # 3. 修复字符串内的换行
         def fix_string_newlines(text):
             result = []
@@ -1636,18 +2102,84 @@ Output ONLY valid JSON array. No markdown.
         try:
             return json.loads(s)
         except json.JSONDecodeError as e:
+            print(f"⚠️ {context}: JSON parse failed, attempting truncation repair...")
+
+            # 尝试修复截断的 JSON
+            repaired = self._try_repair_truncated_json(s)
+            if repaired:
+                print(f"   🔧 JSON repair successful")
+                return repaired
+
             # 打印错误上下文
             lines = s.split('\n')
             error_line = e.lineno - 1
             start = max(0, error_line - 2)
             end = min(len(lines), error_line + 3)
-            print(f"❌ {context}: JSON parse failed after fixes")
+            print(f"❌ {context}: JSON parse failed after all fixes")
+            print(f"   Error: {e.msg} at line {e.lineno}, col {e.colno}")
             print(f"   Error context (lines {start+1}-{end}):")
             for i in range(start, end):
                 marker = ">>> " if i == error_line else "    "
                 line_preview = lines[i][:80] + "..." if len(lines[i]) > 80 else lines[i]
                 print(f"   {marker}{i+1}: {line_preview}")
             raise
+
+    def _try_repair_truncated_json(self, text: str) -> Optional[Dict[str, Any]]:
+        """
+        尝试修复截断的 JSON
+
+        常见问题：
+        1. JSON 在中间被截断，缺少闭合括号
+        2. 最后一个元素不完整
+        """
+        s = text.strip()
+
+        # 如果已经是有效 JSON，直接返回
+        try:
+            return json.loads(s)
+        except:
+            pass
+
+        # 尝试找到最后一个完整的 } 或 ]
+        # 然后补全缺失的括号
+        open_braces = s.count('{') - s.count('}')
+        open_brackets = s.count('[') - s.count(']')
+
+        if open_braces > 0 or open_brackets > 0:
+            # 删除最后一个不完整的元素（通常在逗号后面）
+            # 找到最后一个完整的 } 或 ]
+            last_complete_idx = max(s.rfind('}'), s.rfind(']'))
+            if last_complete_idx > 0:
+                s = s[:last_complete_idx + 1]
+
+            # 重新计算
+            open_braces = s.count('{') - s.count('}')
+            open_brackets = s.count('[') - s.count(']')
+
+            # 补全括号
+            s += ']' * open_brackets + '}' * open_braces
+
+            try:
+                return json.loads(s)
+            except:
+                pass
+
+        # 尝试提取第一个完整的顶层对象
+        brace_count = 0
+        start_idx = s.find('{')
+        if start_idx >= 0:
+            for i in range(start_idx, len(s)):
+                if s[i] == '{':
+                    brace_count += 1
+                elif s[i] == '}':
+                    brace_count -= 1
+                    if brace_count == 0:
+                        try:
+                            return json.loads(s[start_idx:i + 1])
+                        except:
+                            break
+
+        return None
 
     def _distribute_remixed_to_pillars(self, remixed_layer: Dict[str, Any]) -> None:
         """

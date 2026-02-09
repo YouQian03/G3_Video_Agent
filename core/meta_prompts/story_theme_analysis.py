@@ -169,12 +169,22 @@ Analyze the provided video file:
 """
 
 
-def convert_to_frontend_format(ai_output: dict) -> dict:
+def convert_to_frontend_format(ai_output) -> dict:
     """
     将 AI 输出的 concrete 层转换为前端 StoryThemeAnalysis 格式
 
     从新的双层结构中提取 concrete 子字段
     """
+    # 处理 list 类型的输出（Gemini 有时返回数组）
+    if isinstance(ai_output, list):
+        if len(ai_output) > 0 and isinstance(ai_output[0], dict):
+            ai_output = ai_output[0]
+        else:
+            return {}
+
+    if not isinstance(ai_output, dict):
+        return {}
+
     # 获取 storyThemeAnalysis 根对象
     analysis = ai_output.get("storyThemeAnalysis", ai_output)
 
@@ -202,12 +212,22 @@ def convert_to_frontend_format(ai_output: dict) -> dict:
     }
 
 
-def extract_abstract_layer(ai_output: dict) -> dict:
+def extract_abstract_layer(ai_output) -> dict:
     """
     提取 AI 输出的 abstract 层，作为隐形模板存储
 
     用于后续 Remix 阶段的意图注入
     """
+    # 处理 list 类型的输出（Gemini 有时返回数组）
+    if isinstance(ai_output, list):
+        if len(ai_output) > 0 and isinstance(ai_output[0], dict):
+            ai_output = ai_output[0]
+        else:
+            return {}
+
+    if not isinstance(ai_output, dict):
+        return {}
+
     # 获取 storyThemeAnalysis 根对象
     analysis = ai_output.get("storyThemeAnalysis", ai_output)
 

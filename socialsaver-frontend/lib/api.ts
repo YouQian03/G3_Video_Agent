@@ -103,15 +103,47 @@ export async function getStoryboard(jobId: string): Promise<SocialSaverStoryboar
 /**
  * Get job status
  */
-export async function getJobStatus(jobId: string): Promise<JobStatus> {
-  const response = await fetch(`${API_BASE_URL}/api/job/${jobId}/status`);
+export async function getJobStatus(jobId: string, maxRetries: number = 3): Promise<JobStatus> {
+  let lastError: Error | null = null;
 
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({ detail: "Failed to fetch status" }));
-    throw new Error(error.detail || "Failed to fetch status");
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/job/${jobId}/status`);
+
+      if (!response.ok) {
+        // For 5xx errors, retry
+        if (response.status >= 500 && attempt < maxRetries - 1) {
+          console.warn(`[getJobStatus] Server error (${response.status}), retrying in ${(attempt + 1) * 500}ms...`);
+          await new Promise(resolve => setTimeout(resolve, (attempt + 1) * 500));
+          continue;
+        }
+        const error = await response.json().catch(() => ({ detail: "Failed to fetch status" }));
+        throw new Error(error.detail || "Failed to fetch status");
+      }
+
+      return response.json();
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error("Unknown error");
+
+      // Network errors or fetch failures - retry
+      if (attempt < maxRetries - 1) {
+        console.warn(`[getJobStatus] Fetch error, retrying in ${(attempt + 1) * 500}ms...`, error);
+        await new Promise(resolve => setTimeout(resolve, (attempt + 1) * 500));
+        continue;
+      }
+    }
   }
 
-  return response.json();
+  // All retries failed - return a default status instead of throwing
+  // This prevents the UI from showing "Failed" when the backend is just temporarily busy
+  console.error("[getJobStatus] All retries failed, returning default status");
+  return {
+    status: "unknown",
+    globalStages: { video_gen: "RUNNING" }, // Assume still running
+    totalShots: 0,
+    videoGeneratedCount: 0,
+    runningCount: 1, // Assume something is running
+  } as JobStatus;
 }
 
 /**

@@ -5,6 +5,10 @@ from google.genai import types
 
 # 确保环境变量已加载
 api_key = os.environ.get("GEMINI_API_KEY")
+# Sanitize API key to remove non-ASCII characters (fixes encoding errors in HTTP headers)
+if api_key:
+    api_key = api_key.strip()
+    api_key = ''.join(c for c in api_key if c.isascii() and c.isprintable())
 client = genai.Client(api_key=api_key)
 
 def run_veo_generation(shot_id, prompt, image_path, output_dir="output_videos"):

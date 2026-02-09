@@ -41,6 +41,9 @@ def main():
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
         raise RuntimeError("没有检测到 GEMINI_API_KEY 环境变量（请先 export GEMINI_API_KEY=你的key）")
+    # Sanitize API key to remove non-ASCII characters (fixes encoding errors in HTTP headers)
+    api_key = api_key.strip()
+    api_key = ''.join(c for c in api_key if c.isascii() and c.isprintable())
 
     if not FRAMES_DIR.exists():
         raise FileNotFoundError(f"找不到 frames 文件夹：{FRAMES_DIR}")

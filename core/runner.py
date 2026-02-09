@@ -249,6 +249,10 @@ def ai_stylize_frame(job_dir: Path, wf: dict, shot: dict) -> str:
     from google.genai import types
 
     api_key = os.getenv("GEMINI_API_KEY")
+    # Sanitize API key to remove non-ASCII characters (fixes encoding errors in HTTP headers)
+    if api_key:
+        api_key = api_key.strip()
+        api_key = ''.join(c for c in api_key if c.isascii() and c.isprintable())
     client = genai.Client(api_key=api_key, http_options={'api_version': 'v1beta'})
 
     src = job_dir / shot["assets"]["first_frame"]
@@ -428,6 +432,10 @@ def veo_generate_video(job_dir: Path, wf: dict, shot: dict) -> str:
     from google.genai import types
 
     api_key = os.getenv("GEMINI_API_KEY")
+    # Sanitize API key to remove non-ASCII characters (fixes encoding errors in HTTP headers)
+    if api_key:
+        api_key = api_key.strip()
+        api_key = ''.join(c for c in api_key if c.isascii() and c.isprintable())
     # 使用与 video_generator.py 相同的客户端初始化方式
     client = genai.Client(api_key=api_key)
 
@@ -747,11 +755,14 @@ def seedance_generate_video(job_dir: Path, wf: dict, shot: dict) -> str:
     # 构建 Seedance prompt
     prompt_parts = [description]
 
+    # 🌐 强制英语语音指令
+    prompt_parts.append("[IMPORTANT: All spoken dialogue and voiceover must be in English only. Do not use any other language.]")
+
     # 如果有对白，添加语音描述
     if dialogue_text and dialogue_text.strip():
-        voice_desc = f'[The character naturally delivers the line: "{dialogue_text}" in a {voice_tone}, {voice_style} voice.]'
+        voice_desc = f'[The character naturally delivers the line: "{dialogue_text}" in a {voice_tone}, {voice_style} English voice.]'
         prompt_parts.append(voice_desc)
-        print(f"🎤 [Seedance] Adding voiceover: {dialogue_text[:50]}...")
+        print(f"🎤 [Seedance] Adding voiceover (English): {dialogue_text[:50]}...")
 
     prompt_parts.append(f"Style: {style}. Cinematic, high quality, smooth motion.")
     prompt = " ".join(prompt_parts)

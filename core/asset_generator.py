@@ -94,6 +94,9 @@ class AssetGenerator:
             api_key = os.environ.get("GEMINI_API_KEY")
             if not api_key:
                 raise ValueError("GEMINI_API_KEY environment variable not set")
+            # Sanitize API key to remove non-ASCII characters (fixes encoding errors in HTTP headers)
+            api_key = api_key.strip()
+            api_key = ''.join(c for c in api_key if c.isascii() and c.isprintable())
 
             self.client = genai.Client(api_key=api_key)
             self.types = types
@@ -1143,6 +1146,9 @@ def generate_product_views_with_imagen(
         api_key = os.environ.get("GEMINI_API_KEY")
         if not api_key:
             raise ValueError("GEMINI_API_KEY environment variable not set")
+        # Sanitize API key to remove non-ASCII characters (fixes encoding errors in HTTP headers)
+        api_key = api_key.strip()
+        api_key = ''.join(c for c in api_key if c.isascii() and c.isprintable())
 
         generator.client = genai.Client(api_key=api_key)
         generator.types = types

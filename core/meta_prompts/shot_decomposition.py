@@ -96,9 +96,9 @@ SHOT_DECOMPOSITION_PROMPT = """
           "scene": "Environment with temporal and atmospheric detail. (e.g., 'Rainy late afternoon, small corner cafe interior, condensation on floor-to-ceiling windows, warm amber pendant lights contrast cool grey exterior, sparse patrons in soft focus background')",
 
           "camera": {
-            "shotSize": "ECU | CU | MCU | MS | MLS | LS | ELS | POV | OTS",
-            "cameraAngle": "Eye-level | Low-angle | High-angle | Dutch | Bird's-eye | Worm's-eye",
-            "cameraMovement": "Static | Pan L/R | Tilt U/D | Dolly In/Out | Track L/R | Crane | Handheld | Steadicam | Zoom",
+            "shotSize": "ELS | LS | MLS | MS | MCU | CU | ECU | POV | OTS (see Section 5 for usage guide)",
+            "cameraAngle": "Eye-level | High-angle | Low-angle | Dutch | Bird's-eye | Worm's-eye (see Section 5)",
+            "cameraMovement": "Static | Pan L/R | Tilt U/D | Dolly In/Out | Track L/R | Truck | Crane/Boom | Zoom | Handheld | Steadicam | Arc/Orbit | Following | Leading | Slider (see Section 5)",
             "focalLengthDepth": "e.g., 85mm f/1.8, shallow DOF isolating subject, background bokeh"
           },
 
@@ -177,7 +177,64 @@ SHOT_DECOMPOSITION_PROMPT = """
 
 ---
 
-## 5. DATA INTEGRITY CONSTRAINTS
+## 5. CINEMATOGRAPHY REFERENCE GUIDE
+
+### Shot Types (shotSize field)
+Select based on emotional intent and scene requirements:
+
+| Code | Name | Description | Best Used For |
+|------|------|-------------|---------------|
+| ELS | Extreme Long Shot | Characters tiny like ants, environment dominates | Opening establishing shots, expressing isolation/loneliness |
+| LS | Long Shot | Characters small but actions clearly visible | Action scenes, environment showcase, character introduction |
+| MLS | Medium Long Shot | Full body visible, some environment context | Walking scenes, group interactions |
+| MS | Medium Shot | Waist and up | Standard dialogue, balance of action and expression |
+| MCU | Medium Close-up | Chest and up | Emotional exchange, reaction shots, interviews |
+| CU | Close-up | Face/head only | Emphasize emotion, important lines, intimate moments |
+| ECU | Extreme Close-up | Partial details (eyes, hands, objects) | Create tension, imply clues, dramatic emphasis |
+| POV | Point of View | From character's perspective | Subjective experience, horror, discovery moments |
+| OTS | Over the Shoulder | From behind one character's shoulder | Dialogue scenes, establish spatial relationships |
+
+### Camera Angles (cameraAngle field)
+Select based on power dynamics and psychological intent:
+
+| Angle | Description | Psychological Effect |
+|-------|-------------|---------------------|
+| Eye-level | Same height as character's eyes | Build empathy, neutral/realistic feel |
+| High-angle | Camera shoots down from above | Express vulnerability, helplessness, oppression |
+| Low-angle | Camera shoots up from below | Elevate hero/power, create fear/intimidation |
+| Dutch | Camera tilted off horizontal axis | Mental disturbance, unease, suspense atmosphere |
+| Bird's-eye | 90° vertical down (directly overhead) | Establish geography, visual spectacle, godlike perspective |
+| Worm's-eye | Extreme low angle from ground | Dramatic power, architectural grandeur |
+
+### Camera Movements (cameraMovement field)
+Select based on narrative pacing and subject motion:
+
+| Movement | Description | Best Used For |
+|----------|-------------|---------------|
+| Static | Camera completely stationary | Build tension, comedy timing, contemplative moments |
+| Pan L/R | Camera rotates horizontally left or right | Scan scene, follow horizontal movement, reveal |
+| Tilt U/D | Camera rotates vertically up or down | Reveal height, show power dynamics, dramatic reveal |
+| Dolly In/Out | Camera physically moves toward/away from subject | Enhance emotional impact, change intimacy level |
+| Track L/R | Camera moves horizontally parallel to subject | Follow walking characters, showcase environment |
+| Truck | Horizontal lateral movement on rails | Smooth parallel tracking, professional polish |
+| Crane/Boom | Vertical lift or drop movement | Scene transitions, emphasize importance, epic scale |
+| Zoom | Optical focal length change (no physical movement) | Quick emphasis, artificial/stylized feel, detail punch |
+| Handheld | Operator-held camera with natural shake | Documentary realism, urgency, chaos |
+| Steadicam | Stabilized handheld for smooth floating motion | Following characters through spaces, dreamlike quality |
+| Arc/Orbit | Camera rotates around the subject | 360° character showcase, dramatic reveal, hero moment |
+| Following | Camera trails behind character | Chase scenes, journey emphasis |
+| Leading | Camera moves in front of character facing back | Guide viewer, anticipation building |
+| Slider | Small rail for subtle smooth lateral movement | Subtle dynamism, interview polish, detail showcase |
+
+### Selection Decision Tree
+1. **What's the emotional intent?** → Choose Shot Type
+2. **What's the power dynamic?** → Choose Camera Angle
+3. **Is there subject motion?** → Choose Camera Movement accordingly
+4. **What's the pacing?** → Static for slow/tense, Dynamic for action/energy
+
+---
+
+## 6. DATA INTEGRITY CONSTRAINTS
 
 - Output **ONLY pure JSON**. No markdown code blocks, no explanatory text.
 - Every field in the schema **MUST** be present for every shot.
@@ -409,10 +466,30 @@ Analyze: {input_content}
 SHOT_DETAIL_BATCH_PROMPT = """
 # Prompt: Shot Detail Extraction (Phase 2 - Batch)
 
-**Role**: Master Cinematographer extracting detailed shot parameters.
+**Role**: Master Cinematographer and Film Director extracting detailed shot parameters.
 
 **Task**: For the shots listed below, provide FULL concrete and abstract details.
 You are analyzing shots {batch_start} to {batch_end} of {total_shots} total.
+
+## Camera Parameter Selection Guide
+
+**Shot Size Selection** (based on emotional intent):
+- ELS/LS: Environment dominance, isolation, establishing
+- MLS/MS: Standard dialogue, balance of action and expression
+- MCU/CU: Emotional emphasis, reaction shots
+- ECU: Tension, detail emphasis, dramatic punch
+- POV: Subjective experience | OTS: Dialogue scenes
+
+**Camera Angle Selection** (based on power dynamics):
+- Eye-level: Empathy, neutral | High-angle: Vulnerability, weakness
+- Low-angle: Power, heroic | Dutch: Unease, psychological tension
+- Bird's-eye/Worm's-eye: Dramatic extremes
+
+**Camera Movement Selection** (based on narrative pacing):
+- Static: Tension, contemplation | Pan/Tilt: Reveal, follow horizontal/vertical
+- Dolly: Emotional intensity change | Track/Truck: Follow movement
+- Crane/Boom: Epic scale, transitions | Handheld: Urgency, realism
+- Arc/Orbit: Character showcase | Steadicam: Smooth following
 
 ## Shots to Analyze
 {shot_boundaries}
@@ -436,9 +513,9 @@ You are analyzing shots {batch_start} to {batch_end} of {total_shots} total.
         "scene": "Environment with temporal and atmospheric detail. (20-40 words)",
 
         "camera": {
-          "shotSize": "ECU | CU | MCU | MS | MLS | LS | ELS | POV | OTS",
-          "cameraAngle": "Eye-level | Low-angle | High-angle | Dutch | Bird's-eye | Worm's-eye",
-          "cameraMovement": "Static | Pan L/R | Tilt U/D | Dolly In/Out | Track L/R | Crane | Handheld | Steadicam | Zoom",
+          "shotSize": "ELS | LS | MLS | MS | MCU | CU | ECU | POV | OTS",
+          "cameraAngle": "Eye-level | High-angle | Low-angle | Dutch | Bird's-eye | Worm's-eye",
+          "cameraMovement": "Static | Pan L/R | Tilt U/D | Dolly In/Out | Track L/R | Truck | Crane/Boom | Zoom | Handheld | Steadicam | Arc/Orbit | Following | Leading | Slider",
           "focalLengthDepth": "e.g., 85mm f/1.8, shallow DOF"
         },
 
@@ -525,10 +602,32 @@ def merge_batch_results(
     # 创建 shotId -> detailed_shot 映射
     detailed_shots_map = {}
     for batch in batch_results:
-        for shot in batch.get("shots", []):
-            shot_id = shot.get("shotId")
-            if shot_id:
-                detailed_shots_map[shot_id] = shot
+        # Handle multiple possible formats from Gemini:
+        # 1. List of shots directly: [{"shotId": ...}, ...]
+        # 2. Dict with shots key: {"shots": [...]}
+        # 3. Dict with shotRecipe wrapper: {"shotRecipe": {"shots": [...]}}
+        shots_list = []
+
+        if isinstance(batch, list):
+            shots_list = batch
+        elif isinstance(batch, dict):
+            # Try different possible structures
+            if "shots" in batch:
+                shots_list = batch.get("shots", [])
+            elif "shotRecipe" in batch:
+                shot_recipe = batch.get("shotRecipe", {})
+                if isinstance(shot_recipe, dict):
+                    shots_list = shot_recipe.get("shots", [])
+            else:
+                # Maybe the batch itself contains shot data directly
+                if "shotId" in batch:
+                    shots_list = [batch]
+
+        for shot in shots_list:
+            if isinstance(shot, dict):
+                shot_id = shot.get("shotId")
+                if shot_id:
+                    detailed_shots_map[shot_id] = shot
 
     # 合并结果
     merged_shots = []
@@ -538,6 +637,72 @@ def merge_batch_results(
         if shot_id in detailed_shots_map:
             # 使用详细数据
             detailed = detailed_shots_map[shot_id]
+
+            # 处理多种可能的格式：
+            # 1. 有 concrete 嵌套: {"shotId": "...", "concrete": {...}, "abstract": {...}}
+            # 2. 无 concrete 嵌套: {"shotId": "...", "firstFrameDescription": "...", "camera": {...}}
+            # 3. 混合格式: concrete 存在但为空，camera 在根级别
+
+            concrete_nested = detailed.get("concrete", {})
+            abstract_nested = detailed.get("abstract", {})
+
+            # 判断 camera 数据的实际位置
+            camera_in_concrete = concrete_nested.get("camera", {}) if isinstance(concrete_nested, dict) else {}
+            camera_at_root = detailed.get("camera", {})
+
+            # 优先使用 concrete 嵌套的数据，如果有实际内容
+            has_concrete_content = (
+                isinstance(concrete_nested, dict) and
+                (concrete_nested.get("camera") or concrete_nested.get("firstFrameDescription") or concrete_nested.get("subject"))
+            )
+
+            if has_concrete_content:
+                # 格式 1: 有 concrete 嵌套且有内容
+                concrete_data = concrete_nested
+                abstract_data = abstract_nested
+            else:
+                # 格式 2/3: 无 concrete 嵌套或 concrete 为空，字段在根级别
+                # 合并两个来源的 camera 数据（优先根级别，因为 concrete 可能为空）
+                effective_camera = camera_at_root if camera_at_root else camera_in_concrete
+
+                # 如果 camera 仍然为空，尝试从根级别提取单独的 camera 字段
+                if not effective_camera:
+                    effective_camera = {
+                        "shotSize": detailed.get("shotSize", ""),
+                        "cameraAngle": detailed.get("cameraAngle", ""),
+                        "cameraMovement": detailed.get("cameraMovement", ""),
+                        "focalLengthDepth": detailed.get("focalLengthDepth", "")
+                    }
+                    # 清理空值
+                    effective_camera = {k: v for k, v in effective_camera.items() if v}
+
+                concrete_data = {
+                    "firstFrameDescription": detailed.get("firstFrameDescription", "") or concrete_nested.get("firstFrameDescription", ""),
+                    "subject": detailed.get("subject", "") or concrete_nested.get("subject", ""),
+                    "scene": detailed.get("scene", "") or concrete_nested.get("scene", ""),
+                    "camera": effective_camera,
+                    "lighting": detailed.get("lighting", "") or concrete_nested.get("lighting", ""),
+                    "dynamics": detailed.get("dynamics", "") or concrete_nested.get("dynamics", ""),
+                    "audio": detailed.get("audio", concrete_nested.get("audio", {"soundDesign": "", "music": "", "dialogue": "", "dialogueText": ""})),
+                    "style": detailed.get("style", "") or concrete_nested.get("style", ""),
+                    "negative": detailed.get("negative", "") or concrete_nested.get("negative", "blurry, extra limbs, malformed hands, text, watermark")
+                }
+                # 提取 abstract 相关字段
+                abstract_data = {
+                    "narrativeFunction": detailed.get("narrativeFunction", "") or abstract_nested.get("narrativeFunction", ""),
+                    "visualFunction": detailed.get("visualFunction", "") or abstract_nested.get("visualFunction", ""),
+                    "subjectPlaceholder": detailed.get("subjectPlaceholder", "") or abstract_nested.get("subjectPlaceholder", "[SUBJECT]"),
+                    "actionTemplate": detailed.get("actionTemplate", "") or abstract_nested.get("actionTemplate", ""),
+                    "cameraPreserved": detailed.get("cameraPreserved", {}) or abstract_nested.get("cameraPreserved", effective_camera)
+                }
+
+            # 检查 concrete_data 是否有有效内容（不只是默认值）
+            has_valid_content = (
+                concrete_data.get("firstFrameDescription") or
+                concrete_data.get("camera") or
+                concrete_data.get("lighting")
+            )
+
             merged_shot = {
                 "shotId": shot_id,
                 "beatTag": basic_shot.get("beatTag"),
@@ -546,9 +711,9 @@ def merge_batch_results(
                 "durationSeconds": basic_shot.get("durationSeconds"),
                 "representativeTimestamp": basic_shot.get("representativeTimestamp"),  # 🎯 AI 语义锚点
                 "longTake": basic_shot.get("longTake", False),
-                "concrete": detailed.get("concrete", {}),
-                "abstract": detailed.get("abstract", {}),
-                "_degraded": False
+                "concrete": concrete_data,
+                "abstract": abstract_data,
+                "_degraded": not has_valid_content  # 如果没有有效内容，标记为 degraded
             }
         else:
             # 使用降级数据 (Phase 1 基础信息)

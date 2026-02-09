@@ -1,117 +1,90 @@
 # core/meta_prompts/character_ledger.py
 """
 Meta Prompt: 角色清单生成 (Character Ledger Generation)
-两阶段识别：Phase 1 提取 + Phase 2 聚类
+分离式提取：独立的角色提取 + 独立的场景提取
 用于 Pillar II: Narrative Template 的 characterLedger 数据
 """
 
 from typing import Dict, Any, List
 
-CHARACTER_CLUSTERING_PROMPT = """
-# Task: Character & Environment Clustering for Video Remix
+# ============================================================
+# 角色提取提示词 (Character Extraction Prompt)
+# 使用 "Forensic Auditor" 角色确保不遗漏背景角色和群体
+# ============================================================
+CHARACTER_EXTRACTION_PROMPT = """
+# Role: Forensic Character Analyst and Casting Director
+# Task: Create an exhaustive inventory of ALL human or sentient entities mentioned in the shot descriptions.
 
-You are a Video Analysis AI specializing in character AND environment identification.
+# Instructions:
+1. Audit EVERY shot description sequentially. Do not summarize or skip any shots.
+2. Identify every distinct individual or defined group (e.g., "crowd", "family of four").
+3. CLUSTER IDENTITIES: If a character in shot_05 is clearly the same person as in shot_01 based on description (e.g., "man in car" vs "man walking"), merge them into a single entity.
+4. If a description is vague (e.g., "a person"), treat them as a new character unless context strongly suggests otherwise.
+5. Provide a detailed 'visualDescription' by aggregating all descriptive details from every shot they appear in.
+6. Count the characters; if you find a new person in a shot, you MUST add a new entry. Do not worry about length; accuracy is the priority. Even if there are 10+ characters, list them ALL.
 
-## Mission
-Analyze the extracted shot subjects and cluster them into:
-1. **UNIQUE CHARACTERS** - People/animals that can be tracked across shots
-2. **UNIQUE ENVIRONMENTS** - Distinct locations/settings that appear in the video
+# Constraints:
+- Output ONLY valid JSON.
+- No markdown formatting, no conversational filler.
+- Ensure every character mentioned is captured.
 
-Both character AND environment extraction are MANDATORY. Every video has environments.
-
-## Input: Extracted Shot Subjects
-{shot_subjects}
-
-## Critical Rules for ID Assignment
-
-### 1. Visual Continuity Tracking (Characters)
-- The SAME person appearing in different shots MUST have the SAME ID
-- Use visual cues to identify same person across shots:
-  - Clothing color and style
-  - Body type and posture
-  - Props they carry (bike, shopping bags, etc.)
-  - Context continuity (same scene, adjacent shots)
-
-### 2. Environment Extraction (MANDATORY)
-- Extract ALL unique environments/locations from the "Scene" descriptions
-- Common environment types:
-  - Interior spaces (car interior, restaurant, shop, home)
-  - Exterior spaces (streets, roads, parks, parking lots)
-  - Specific landmarks (McDonald's, buildings with signage)
-- If the same location appears in multiple shots, cluster them under ONE environment ID
-- **You MUST extract at least 1 environment** - every video has at least one setting
-
-### 3. Entity Categories
-- **PRIMARY**: Main characters/environments (appear in 3+ shots OR are central to narrative)
-- **SECONDARY**: Supporting characters/environments (appear in 1-2 shots)
-- **BACKGROUND**: Crowds, extras (do not assign individual IDs, group as "background_crowd")
-
-### 4. ID Naming Convention
-- Characters: `orig_char_XX` (e.g., orig_char_01, orig_char_02)
-- Environments/Locations: `orig_env_XX` (e.g., orig_env_01)
-- Props/Objects: `orig_prop_XX` (e.g., orig_prop_01) - only for KEY props that might need replacement
-
-## Output Format (Strict JSON)
-
+# Schema:
 {
-  "clusteringSuccess": true,
-  "characterLedger": [
+  "characters": [
     {
       "entityId": "orig_char_01",
-      "entityType": "CHARACTER",
-      "importance": "PRIMARY",
-      "displayName": "Human-readable name (e.g., '骑自行车的男子')",
-      "visualSignature": "15-20 word distinctive visual description for identification",
-      "detailedDescription": "80-100 word exhaustive visual description for asset generation",
-      "appearsInShots": ["shot_01", "shot_05", "shot_12"],
-      "shotCount": 3,
-      "trackingConfidence": "HIGH",
-      "visualCues": ["red jacket", "carrying bike", "male, 30s"]
+      "displayName": "Short descriptive name",
+      "appearsInShots": ["shot_01", "shot_02"],
+      "visualDescription": "Consolidated physical details: clothing, age, expression, props.",
+      "importance": "PRIMARY or SECONDARY"
     }
-  ],
-  "environmentLedger": [
-    {
-      "entityId": "orig_env_01",
-      "entityType": "ENVIRONMENT",
-      "importance": "PRIMARY",
-      "displayName": "McDonald's Restaurant",
-      "visualSignature": "Fast food restaurant interior with yellow and red branding",
-      "detailedDescription": "80-100 word detailed environment description",
-      "appearsInShots": ["shot_08", "shot_15", "shot_22"],
-      "shotCount": 3
-    }
-  ],
-  "clusteringSummary": {
-    "totalCharacters": 5,
-    "primaryCharacters": 2,
-    "secondaryCharacters": 3,
-    "totalEnvironments": 3,
-    "totalShots": 24,
-    "unclusteredShots": []
-  }
+  ]
 }
 
-## Special Instructions
-
-1. **Merge Similar Subjects**: If "骑自行车的男子" in shot_03 and "男子推着自行车" in shot_07 are clearly the same person, assign the SAME entityId.
-
-2. **Do NOT Over-Cluster**: Two different people who both "walk into McDonald's" should have DIFFERENT IDs unless visual evidence suggests they're the same person.
-
-3. **Brand/Logo Entities**: Treat brand elements (McDonald's logo, KFC bucket) as ENVIRONMENT entities, not characters.
-
-4. **Confidence Levels**:
-   - HIGH: Clear visual match across shots
-   - MEDIUM: Reasonable inference based on context
-   - LOW: Ambiguous, might be different people
-
-5. **MANDATORY Environment Extraction**:
-   - Read EVERY "Scene" description carefully
-   - Extract distinct locations: "interior of a car" → orig_env_01, "snowy road" → orig_env_02, "city street" → orig_env_03, "inside a shop" → orig_env_04
-   - If environments are similar but distinct (e.g., two different streets), create separate IDs
-   - **Failure to extract environments is NOT acceptable** - the environmentLedger array must NOT be empty
-
-Output ONLY valid JSON. No markdown, no explanation.
+# Input Data:
+{shot_subjects}
 """
+
+# ============================================================
+# 场景/环境提取提示词 (Environment Extraction Prompt)
+# 确保 100% 镜头覆盖率
+# ============================================================
+ENVIRONMENT_EXTRACTION_PROMPT = """
+# Role: Architectural Location Scout and Scene Auditor
+# Task: Extract every unique physical location and ensure 100% shot-to-environment mapping.
+
+# Instructions:
+1. Perform a "Location Audit": Every single shot ID provided MUST be assigned to an environment entity.
+2. CLUSTER LOCATIONS: Group shots that take place in the same physical space (e.g., "Inside McDonald's at a table" and "Inside McDonald's by the counter" = "McDonald's Interior").
+3. DIFFERENTIATE: If a location is distinct (e.g., "Car Interior" vs "Street Outside"), they must be separate entities.
+4. Visual Description: Synthesize the atmospheric details (lighting, weather, specific props/landmarks) from the combined shots.
+
+# Constraints:
+- Output ONLY valid JSON.
+- No markdown, no filler.
+- TOTAL COVERAGE: Every shot ID in the input must appear in exactly one 'appearsInShots' array.
+
+# Schema:
+{
+  "environments": [
+    {
+      "entityId": "orig_env_01",
+      "displayName": "Specific location name",
+      "appearsInShots": ["shot_01"],
+      "visualDescription": "Atmospheric and architectural details: lighting, time of day, weather, key background elements.",
+      "importance": "PRIMARY or SECONDARY"
+    }
+  ]
+}
+
+# Input Data:
+{shot_subjects}
+"""
+
+# ============================================================
+# 保留旧的合并提示词作为备用 (Legacy combined prompt)
+# ============================================================
+CHARACTER_CLUSTERING_PROMPT = CHARACTER_EXTRACTION_PROMPT  # Alias for backward compatibility
 
 
 def build_shot_subjects_input(shots: List[Dict]) -> str:
@@ -138,12 +111,13 @@ def build_shot_subjects_input(shots: List[Dict]) -> str:
     return "\n".join(lines)
 
 
-def process_ledger_result(ai_output: Dict[str, Any]) -> Dict[str, Any]:
+def process_ledger_result(ai_output: Dict[str, Any], all_shot_ids: List[str] = None) -> Dict[str, Any]:
     """
     处理 AI 输出，验证和规范化 character ledger 数据
 
     Args:
         ai_output: Gemini 返回的原始 JSON
+        all_shot_ids: 所有 shot ID 列表，用于验证覆盖率
 
     Returns:
         规范化的 ledger 数据
@@ -196,6 +170,43 @@ def process_ledger_result(ai_output: Dict[str, Any]) -> Dict[str, Any]:
             normalized["entityId"] = f"orig_env_{len(environment_ledger) + 1:02d}"
 
         environment_ledger.append(normalized)
+
+    # 🎯 Post-processing: Ensure 100% shot coverage
+    if all_shot_ids:
+        # Collect all covered shots
+        covered_shots = set()
+        for char in character_ledger:
+            covered_shots.update(char.get("appearsInShots", []))
+        for env in environment_ledger:
+            covered_shots.update(env.get("appearsInShots", []))
+
+        # Find missing shots
+        missing_shots = [sid for sid in all_shot_ids if sid not in covered_shots]
+
+        if missing_shots:
+            print(f"   ⚠️ [Post-processing] {len(missing_shots)} shots not covered: {missing_shots[:5]}{'...' if len(missing_shots) > 5 else ''}")
+
+            # Add missing shots to a generic environment or create one
+            if environment_ledger:
+                # Find the environment with most shots (likely the main setting)
+                main_env = max(environment_ledger, key=lambda e: len(e.get("appearsInShots", [])))
+                main_env["appearsInShots"].extend(missing_shots)
+                main_env["shotCount"] = len(main_env["appearsInShots"])
+                print(f"   ✅ [Post-processing] Added {len(missing_shots)} missing shots to '{main_env['displayName']}'")
+            else:
+                # Create a generic environment
+                generic_env = {
+                    "entityId": "orig_env_01",
+                    "entityType": "ENVIRONMENT",
+                    "importance": "PRIMARY",
+                    "displayName": "Video Setting",
+                    "visualSignature": "General video environment",
+                    "detailedDescription": "The main setting of the video",
+                    "appearsInShots": missing_shots,
+                    "shotCount": len(missing_shots)
+                }
+                environment_ledger.append(generic_env)
+                print(f"   ✅ [Post-processing] Created generic environment for {len(missing_shots)} missing shots")
 
     # 计算汇总信息
     primary_chars = [c for c in character_ledger if c["importance"] == "PRIMARY"]

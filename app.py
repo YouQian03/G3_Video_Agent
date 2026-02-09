@@ -457,12 +457,12 @@ async def get_storyboard_socialsaver(job_id: str):
                         "sound_design": audio.get("soundDesign", ""),
                         "music_mood": audio.get("music", ""),
                         # 🎬 合并为 music_and_sound
-                        "music_and_sound": (audio.get("soundDesign", "") + " | " + audio.get("music", "")).strip(" |"),
+                        "music_and_sound": ((audio.get("soundDesign") or "") + " | " + (audio.get("music") or "")).strip(" |"),
                         # 🎬 对白/旁白
-                        "dialogue_voiceover": audio.get("dialogue", ""),
-                        "dialogue_text": audio.get("dialogueText", ""),
+                        "dialogue_voiceover": audio.get("dialogue") or "",
+                        "dialogue_text": audio.get("dialogueText") or "",
                         # 🎬 合并为 voiceover
-                        "voiceover": (audio.get("dialogue", "") + (" - " + audio.get("dialogueText", "") if audio.get("dialogueText") else "")).strip(),
+                        "voiceover": ((audio.get("dialogue") or "") + (" - " + (audio.get("dialogueText") or "") if audio.get("dialogueText") else "")).strip(),
                     })
                 workflow["shots"] = converted_shots
         except Exception as e:
@@ -1120,6 +1120,9 @@ def generate_storyboard_frame(
         if not api_key:
             print(f"   ❌ GEMINI_API_KEY not set")
             return ""
+        # Sanitize API key to remove non-ASCII characters (fixes encoding errors in HTTP headers)
+        api_key = api_key.strip()
+        api_key = ''.join(c for c in api_key if c.isascii() and c.isprintable())
 
         client = genai.Client(api_key=api_key)
 
@@ -1134,8 +1137,13 @@ def generate_storyboard_frame(
             # 构建叙述性 prompt（按照 Gemini 文档建议，使用描述性段落而非指令列表）
             prompt_parts = []
 
-            # 描述场景和目标
-            prompt_parts.append(f"Generate a cinematic frame based on the provided reference images.")
+            # 🎯 核心指令：明确这是一个图片编辑任务
+            prompt_parts.append("TASK: Edit the provided reference image to match this description.")
+            prompt_parts.append("IMPORTANT: You MUST modify the image. Do NOT return the original unchanged.")
+
+            # 场景描述（这里包含了用户的修改请求）
+            if t2i_prompt:
+                prompt_parts.append(f"TARGET SCENE: {t2i_prompt}")
 
             # 参考图说明（告诉 Gemini 每张图的用途）
             if all_reference_images:
@@ -1143,36 +1151,37 @@ def generate_storyboard_frame(
                 env_refs = [r for r in all_reference_images if 'env' in r['anchor_id'].lower()]
 
                 if char_refs:
-                    prompt_parts.append(f"I have provided {len(char_refs)} character reference images showing the exact appearance of the characters:")
+                    prompt_parts.append(f"CHARACTER REFERENCES: I have provided {len(char_refs)} character reference images:")
                     for ref in char_refs:
                         prompt_parts.append(f"  - {ref['anchor_id']} ({ref['view']} view)")
-                    prompt_parts.append("The characters in the output should look exactly like these reference images, maintaining their facial features, clothing, and overall appearance.")
+                    prompt_parts.append("Match character appearances to these references.")
 
                 if env_refs:
-                    prompt_parts.append(f"I have provided {len(env_refs)} environment reference images:")
+                    prompt_parts.append(f"ENVIRONMENT REFERENCES: I have provided {len(env_refs)} environment reference images:")
                     for ref in env_refs:
                         prompt_parts.append(f"  - {ref['anchor_id']} ({ref['view']} view)")
 
             # 角色详细描述
             if char_descs:
+                prompt_parts.append("CHARACTER DETAILS:")
                 for desc in char_descs:
-                    prompt_parts.append(f"Character details: {desc}")
+                    prompt_parts.append(f"  {desc}")
 
             # 环境详细描述
             if env_descs:
+                prompt_parts.append("ENVIRONMENT DETAILS:")
                 for desc in env_descs:
-                    prompt_parts.append(f"Environment details: {desc}")
-
-            # 场景上下文
-            if t2i_prompt:
-                prompt_parts.append(f"Scene description: {t2i_prompt}")
+                    prompt_parts.append(f"  {desc}")
 
             # 视觉风格
             if style_parts:
-                prompt_parts.append(f"Visual style: {', '.join(style_parts)}")
+                prompt_parts.append(f"VISUAL STYLE: {', '.join(style_parts)}")
 
-            # 构图参考（原始帧）
-            prompt_parts.append("The last image provided is the composition reference. Maintain the exact same camera angle, framing, and layout, but replace the characters with the ones shown in the character reference images.")
+            # 编辑规则
+            prompt_parts.append("EDITING RULES:")
+            prompt_parts.append("1. Preserve the camera angle, framing, and overall composition from the reference image.")
+            prompt_parts.append("2. Apply the described changes (colors, objects, characters, etc.) as specified in TARGET SCENE.")
+            prompt_parts.append("3. Generate a high-quality cinematic frame with the requested modifications.")
 
             final_prompt = " ".join(prompt_parts)
             print(f"   📝 Edit prompt: {final_prompt[:300]}...")
@@ -1283,21 +1292,60 @@ def generate_storyboard_frame(
                     print(f"   ⏱️ Timeout after {TIMEOUT_SECONDS}s for {shot_id}, skipping...")
                     return ""
 
-        # 提取生成的图片
+        # 提取生成的图片和文字反馈
+        text_response = None
+        image_generated = False
+
         for part in response.candidates[0].content.parts:
+            # 检查文字反馈（Gemini 可能解释为什么没做修改）
+            if hasattr(part, 'text') and part.text:
+                text_response = part.text
+                print(f"   💬 Gemini response: {text_response[:200]}...")
+
+            # 提取图片
             if hasattr(part, 'inline_data') and part.inline_data is not None:
                 image_data = part.inline_data.data
-                image = Image.open(io.BytesIO(image_data))
+                new_image = Image.open(io.BytesIO(image_data))
                 output_path = storyboard_dir / f"{shot_id}.png"
-                image.save(output_path)
-                print(f"   ✅ Generated: {output_path}")
+
+                # 🔍 调试：比较新旧图片大小，检测是否真的有变化
+                new_size = len(image_data)
+                old_size = 0
+                if output_path.exists():
+                    old_size = output_path.stat().st_size
+
+                # 🔍 调试：计算简单的图片差异（比较像素）
+                if has_reference and original_frame_path.exists():
+                    try:
+                        original_image = Image.open(original_frame_path)
+                        # 比较图片尺寸
+                        if original_image.size == new_image.size:
+                            # 比较部分像素
+                            import hashlib
+                            orig_hash = hashlib.md5(original_image.tobytes()[:10000]).hexdigest()
+                            new_hash = hashlib.md5(new_image.tobytes()[:10000]).hexdigest()
+                            if orig_hash == new_hash:
+                                print(f"   ⚠️ WARNING: Generated image appears IDENTICAL to original!")
+                            else:
+                                print(f"   ✓ Image modified (hash diff: {orig_hash[:8]} → {new_hash[:8]})")
+                    except Exception as cmp_e:
+                        print(f"   ⚠️ Could not compare images: {cmp_e}")
+
+                new_image.save(output_path)
+                print(f"   ✅ Generated: {output_path} (size: {old_size} → {new_size} bytes)")
+                image_generated = True
                 return f"/assets/{job_id}/storyboard_frames/{shot_id}.png"
 
-        print(f"   ⚠️ No image generated for {shot_id}")
+        if not image_generated:
+            print(f"   ⚠️ No image generated for {shot_id}")
+            if text_response:
+                print(f"   💬 Gemini only returned text: {text_response}")
         return ""
 
     except Exception as e:
+        import traceback
         print(f"   ❌ Failed to generate {shot_id}: {e}")
+        print(f"   📋 Traceback: {traceback.format_exc()}")
         return ""
 
 
@@ -1592,6 +1640,10 @@ async def storyboard_chat(job_id: str, request: StoryboardChatRequest):
     from google.genai import types
 
     api_key = os.getenv("GEMINI_API_KEY")
+    # Sanitize API key to remove non-ASCII characters (fixes encoding errors in HTTP headers)
+    if api_key:
+        api_key = api_key.strip()
+        api_key = ''.join(c for c in api_key if c.isascii() and c.isprintable())
     client = genai.Client(api_key=api_key)
 
     ir_manager = FilmIRManager(job_id)
@@ -1903,6 +1955,44 @@ async def finalize_storyboard(job_id: str, request: FinalizeStoryboardRequest):
         ir_manager.save()
 
         print(f"✅ [Finalize] Saved {len(updated_shots)} shots to Film IR")
+
+        # 4.5 同步到 workflow.json (解决数据源不一致问题)
+        from core.workflow_io import load_workflow, save_workflow
+        wf = load_workflow(job_dir)
+
+        # 转换 Film IR 格式到 workflow 格式
+        workflow_shots = []
+        for shot in updated_shots:
+            shot_id = shot.get("shotId", "shot_01")
+            camera = shot.get("cameraPreserved", {})
+
+            workflow_shots.append({
+                "shot_id": shot_id,
+                "frame_description": shot.get("visualDescription", ""),
+                "content_analysis": shot.get("contentDescription", ""),
+                "description": shot.get("I2V_VideoGen", "") or shot.get("visualDescription", ""),
+                "start_time": shot.get("startTime", 0),
+                "end_time": shot.get("endTime", 0),
+                "assets": {
+                    "first_frame": f"frames/{shot_id}.png",
+                    "storyboard_frame": f"storyboard_frames/{shot_id}.png",
+                    "video": None
+                },
+                "status": {
+                    "stylize": "SUCCESS",  # storyboard frame 已生成
+                    "video_generate": "NOT_STARTED"
+                },
+                "cinematography": {
+                    "shot_type": camera.get("shotSize", ""),
+                    "camera_angle": camera.get("cameraAngle", ""),
+                    "camera_movement": camera.get("cameraMovement", ""),
+                },
+                "dialogue_text": shot.get("action", ""),
+            })
+
+        wf["shots"] = workflow_shots
+        save_workflow(job_dir, wf)
+        print(f"✅ [Finalize] Synced {len(workflow_shots)} shots to workflow.json")
 
         # 5. 验证 storyboard_frames 是否存在
         storyboard_frames_dir = job_dir / "storyboard_frames"
@@ -3573,6 +3663,9 @@ async def retry_shot_analysis(job_id: str, request: RetryBatchRequest = None):
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
         raise HTTPException(status_code=500, detail="GEMINI_API_KEY not set")
+    # Sanitize API key to remove non-ASCII characters (fixes encoding errors in HTTP headers)
+    api_key = api_key.strip()
+    api_key = ''.join(c for c in api_key if c.isascii() and c.isprintable())
 
     client = genai.Client(api_key=api_key)
 

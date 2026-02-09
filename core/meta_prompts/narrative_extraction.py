@@ -106,7 +106,7 @@ Analyze the provided video file:
 """
 
 
-def convert_to_frontend_format(ai_output: dict) -> dict:
+def convert_to_frontend_format(ai_output) -> dict:
     """
     将 AI 输出的 concrete 层转换为前端 ScriptAnalysis 格式
 
@@ -114,6 +114,16 @@ def convert_to_frontend_format(ai_output: dict) -> dict:
     - 提取每个模块的 concrete 部分
     - lengthDuration -> length 字段映射
     """
+    # 处理 list 类型的输出（Gemini 有时返回数组）
+    if isinstance(ai_output, list):
+        if len(ai_output) > 0 and isinstance(ai_output[0], dict):
+            ai_output = ai_output[0]
+        else:
+            return {}
+
+    if not isinstance(ai_output, dict):
+        return {}
+
     template = ai_output.get("narrativeTemplate", ai_output)
 
     def get_concrete(module_name: str) -> dict:
@@ -146,10 +156,20 @@ def convert_to_frontend_format(ai_output: dict) -> dict:
     }
 
 
-def extract_abstract_layer(ai_output: dict) -> dict:
+def extract_abstract_layer(ai_output) -> dict:
     """
     提取 AI 输出的 abstract 层，作为隐形模板存储
     """
+    # 处理 list 类型的输出
+    if isinstance(ai_output, list):
+        if len(ai_output) > 0 and isinstance(ai_output[0], dict):
+            ai_output = ai_output[0]
+        else:
+            return {}
+
+    if not isinstance(ai_output, dict):
+        return {}
+
     template = ai_output.get("narrativeTemplate", ai_output)
 
     def get_abstract(module_name: str) -> dict:
@@ -175,10 +195,20 @@ def extract_abstract_layer(ai_output: dict) -> dict:
     }
 
 
-def extract_hidden_assets(ai_output: dict) -> dict:
+def extract_hidden_assets(ai_output) -> dict:
     """
     提取 detailedCharacterBios 作为隐藏资产
     用于 Stage 3 资产生成
     """
+    # 处理 list 类型的输出
+    if isinstance(ai_output, list):
+        if len(ai_output) > 0 and isinstance(ai_output[0], dict):
+            ai_output = ai_output[0]
+        else:
+            return {}
+
+    if not isinstance(ai_output, dict):
+        return {}
+
     template = ai_output.get("narrativeTemplate", ai_output)
     return template.get("detailedCharacterBios", {})
